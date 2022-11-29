@@ -3,9 +3,10 @@ var stencil: texture_2d<f32>;
 @group(0) @binding(1)
 var stencil_sampler: sampler;
 
-let KERNEL_SIZE: f32 = 3.0;
+let KERNEL_SIZE: f32 = 20.0;
 
 // TODO should probably precompute the texelsize
+// TODO use gaussian blur instead of box blur
 
 @fragment
 fn vertical_blur(@location(0) uv: vec2<f32>) -> @location(0) vec4<f32> {

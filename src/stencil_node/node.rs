@@ -8,6 +8,7 @@ use bevy::{
             LoadOp, Operations, PipelineCache, RenderPassColorAttachment, RenderPassDescriptor,
         },
         renderer::RenderContext,
+        view::ViewTarget,
     },
 };
 
@@ -16,6 +17,7 @@ use super::{MeshStencil, OutlineBindGroups, OutlinePipelines, StencilTexture};
 /// Render graph node for producing stencils from meshes.
 pub struct StencilNode {
     query: QueryState<(
+        &'static ViewTarget,
         &'static ExtractedCamera,
         &'static RenderPhase<MeshStencil>,
         &'static StencilTexture,
@@ -49,16 +51,17 @@ impl Node for StencilNode {
         world: &World,
     ) -> Result<(), bevy::render::render_graph::NodeRunError> {
         let view_entity = graph.get_input_entity(Self::IN_VIEW)?;
-        let Ok((camera, stencil_phase, textures, bind_groups)) = self.query.get_manual(world, view_entity) else {
+        let Ok((view_target, camera, stencil_phase, textures, bind_groups)) = self.query.get_manual(world, view_entity) else {
             return Ok(());
         };
 
         let pipelines = world.resource::<OutlinePipelines>();
         let pipeline_cache = world.resource::<PipelineCache>();
 
-        let (Some(vertical_blur_pipeline), Some(horizontal_blur_pipeline)) = (
+        let (Some(vertical_blur_pipeline), Some(horizontal_blur_pipeline), Some(combine_pipeline)) = (
             pipeline_cache.get_render_pipeline(pipelines.vertical_blur_pipeline),
-            pipeline_cache.get_render_pipeline(pipelines.horizontal_blur_pipeline)
+            pipeline_cache.get_render_pipeline(pipelines.horizontal_blur_pipeline),
+            pipeline_cache.get_render_pipeline(pipelines.combine_pipeline)
         ) else {
             return Ok(());
         };
@@ -142,6 +145,32 @@ impl Node for StencilNode {
                 vertical_blur_pass.set_camera_viewport(viewport);
             }
             vertical_blur_pass.draw(0..3, 0..1);
+        }
+
+        // final combine pass
+        {
+            let mut combine_pass =
+                TrackedRenderPass::new(render_context.command_encoder.begin_render_pass(
+                    &RenderPassDescriptor {
+                        label: Some("outline_combine_pass"),
+                        color_attachments: &[Some(RenderPassColorAttachment {
+                            view: &view_target.view,
+                            resolve_target: None,
+                            ops: Operations {
+                                load: LoadOp::Load,
+                                store: true,
+                            },
+                        })],
+                        depth_stencil_attachment: None,
+                    },
+                ));
+
+            combine_pass.set_render_pipeline(combine_pipeline);
+            combine_pass.set_bind_group(0, &bind_groups.combine_bind_group, &[]);
+            if let Some(viewport) = camera.viewport.as_ref() {
+                combine_pass.set_camera_viewport(viewport);
+            }
+            combine_pass.draw(0..3, 0..1);
         }
 
         Ok(())

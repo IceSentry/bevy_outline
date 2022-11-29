@@ -23,7 +23,7 @@ use bevy::{
 
 use crate::{
     plugin::Outline,
-    stencil_node::{OutlinePipelines, BLUR_SHADER_HANDLE},
+    stencil_node::{OutlinePipelines, BLUR_SHADER_HANDLE, COMBINE_SHADER_HANDLE},
 };
 
 use super::{
@@ -43,6 +43,12 @@ impl Plugin for StencilPassPlugin {
         );
 
         load_internal_asset!(app, BLUR_SHADER_HANDLE, "blur.wgsl", Shader::from_wgsl);
+        load_internal_asset!(
+            app,
+            COMBINE_SHADER_HANDLE,
+            "combine.wgsl",
+            Shader::from_wgsl
+        );
 
         let Ok(render_app) = app.get_sub_app_mut(RenderApp) else {
             return;
@@ -142,9 +148,37 @@ fn queue_outline_bind_groups(
             ],
         });
 
-        commands
-            .entity(entity)
-            .insert(OutlineBindGroups { blur_bind_group });
+        let combine_bind_group = render_device.create_bind_group(&BindGroupDescriptor {
+            label: Some("outline_combine_bind_group"),
+            layout: &pipelines.combine_bind_group_layout,
+            entries: &[
+                BindGroupEntry {
+                    binding: 0,
+                    resource: BindingResource::Sampler(&pipelines.sampler),
+                },
+                BindGroupEntry {
+                    binding: 1,
+                    resource: BindingResource::TextureView(&textures.stencil_texture.default_view),
+                },
+                BindGroupEntry {
+                    binding: 2,
+                    resource: BindingResource::TextureView(
+                        &textures.vertical_blur_texture.default_view,
+                    ),
+                },
+                BindGroupEntry {
+                    binding: 3,
+                    resource: BindingResource::TextureView(
+                        &textures.horizontal_blur_texture.default_view,
+                    ),
+                },
+            ],
+        });
+
+        commands.entity(entity).insert(OutlineBindGroups {
+            blur_bind_group,
+            combine_bind_group,
+        });
     }
 }
 

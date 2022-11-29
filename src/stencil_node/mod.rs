@@ -33,6 +33,9 @@ pub const STENCIL_SHADER_HANDLE: HandleUntyped =
 const BLUR_SHADER_HANDLE: HandleUntyped =
     HandleUntyped::weak_from_u64(Shader::TYPE_UUID, 929599476923908);
 
+const COMBINE_SHADER_HANDLE: HandleUntyped =
+    HandleUntyped::weak_from_u64(Shader::TYPE_UUID, 92959957692390825);
+
 #[derive(Component)]
 pub struct StencilTexture {
     pub stencil_texture: CachedTexture,
@@ -43,13 +46,16 @@ pub struct StencilTexture {
 #[derive(Component)]
 pub struct OutlineBindGroups {
     blur_bind_group: BindGroup,
+    combine_bind_group: BindGroup,
 }
 
 pub struct OutlinePipelines {
     sampler: Sampler,
     blur_bind_group_layout: BindGroupLayout,
+    combine_bind_group_layout: BindGroupLayout,
     horizontal_blur_pipeline: CachedRenderPipelineId,
     vertical_blur_pipeline: CachedRenderPipelineId,
+    combine_pipeline: CachedRenderPipelineId,
 }
 
 impl FromWorld for OutlinePipelines {
@@ -65,9 +71,9 @@ impl FromWorld for OutlinePipelines {
         });
         let blur_bind_group_layout =
             render_device.create_bind_group_layout(&BindGroupLayoutDescriptor {
-                label: Some("bloom_downsampling_bind_group_layout"),
+                label: Some("blur_bind_group_layout"),
                 entries: &[
-                    // input texture
+                    // stencil texture
                     BindGroupLayoutEntry {
                         binding: 0,
                         ty: BindingType::Texture {
@@ -82,6 +88,52 @@ impl FromWorld for OutlinePipelines {
                     BindGroupLayoutEntry {
                         binding: 1,
                         ty: BindingType::Sampler(SamplerBindingType::Filtering),
+                        visibility: ShaderStages::FRAGMENT,
+                        count: None,
+                    },
+                ],
+            });
+        let combine_bind_group_layout =
+            render_device.create_bind_group_layout(&BindGroupLayoutDescriptor {
+                label: Some("combine_bind_group_layout"),
+                entries: &[
+                    // sampler
+                    BindGroupLayoutEntry {
+                        binding: 0,
+                        ty: BindingType::Sampler(SamplerBindingType::Filtering),
+                        visibility: ShaderStages::FRAGMENT,
+                        count: None,
+                    },
+                    // stencil texture
+                    BindGroupLayoutEntry {
+                        binding: 1,
+                        ty: BindingType::Texture {
+                            sample_type: TextureSampleType::Float { filterable: true },
+                            view_dimension: TextureViewDimension::D2,
+                            multisampled: false,
+                        },
+                        visibility: ShaderStages::FRAGMENT,
+                        count: None,
+                    },
+                    // vertical blur texture
+                    BindGroupLayoutEntry {
+                        binding: 2,
+                        ty: BindingType::Texture {
+                            sample_type: TextureSampleType::Float { filterable: true },
+                            view_dimension: TextureViewDimension::D2,
+                            multisampled: false,
+                        },
+                        visibility: ShaderStages::FRAGMENT,
+                        count: None,
+                    },
+                    // horizontal blur texture
+                    BindGroupLayoutEntry {
+                        binding: 3,
+                        ty: BindingType::Texture {
+                            sample_type: TextureSampleType::Float { filterable: true },
+                            view_dimension: TextureViewDimension::D2,
+                            multisampled: false,
+                        },
                         visibility: ShaderStages::FRAGMENT,
                         count: None,
                     },
@@ -130,11 +182,32 @@ impl FromWorld for OutlinePipelines {
                 multisample: MultisampleState::default(),
             });
 
+        let combine_pipeline = pipeline_cache.queue_render_pipeline(RenderPipelineDescriptor {
+            label: Some("combine_pipeline".into()),
+            layout: Some(vec![combine_bind_group_layout.clone()]),
+            vertex: fullscreen_shader_vertex_state(),
+            fragment: Some(FragmentState {
+                shader: COMBINE_SHADER_HANDLE.typed::<Shader>(),
+                shader_defs: vec![],
+                entry_point: "combine".into(),
+                targets: vec![Some(ColorTargetState {
+                    format: TextureFormat::bevy_default(),
+                    blend: None,
+                    write_mask: ColorWrites::ALL,
+                })],
+            }),
+            primitive: PrimitiveState::default(),
+            depth_stencil: None,
+            multisample: MultisampleState::default(),
+        });
+
         Self {
             sampler,
             blur_bind_group_layout,
+            combine_bind_group_layout,
             vertical_blur_pipeline,
             horizontal_blur_pipeline,
+            combine_pipeline,
         }
     }
 }
