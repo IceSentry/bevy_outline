@@ -1,4 +1,5 @@
 use bevy::{
+    asset::load_internal_asset,
     core_pipeline::core_3d,
     prelude::*,
     render::{
@@ -8,7 +9,10 @@ use bevy::{
     },
 };
 
-use crate::stencil_node::{node::StencilNode, plugin::StencilPassPlugin};
+use crate::{
+    fullscreen_vertex_shader::FULLSCREEN_SHADER_HANDLE,
+    stencil_node::{node::StencilNode, plugin::StencilPassPlugin},
+};
 
 #[derive(Component, Clone, Copy)]
 pub struct Outline;
@@ -36,6 +40,13 @@ mod graph {
 pub struct BlurredOutlinePlugin;
 impl Plugin for BlurredOutlinePlugin {
     fn build(&self, app: &mut App) {
+        load_internal_asset!(
+            app,
+            FULLSCREEN_SHADER_HANDLE,
+            "fullscreen_vertex_shader/fullscreen.wgsl",
+            Shader::from_wgsl
+        );
+
         app.add_plugin(StencilPassPlugin)
             .add_plugin(ExtractComponentPlugin::<Outline>::default());
 

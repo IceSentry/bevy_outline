@@ -9,8 +9,9 @@ use bevy::{
             sort_phase_system, AddRenderCommand, DrawFunctions, RenderPhase, SetItemPipeline,
         },
         render_resource::{
-            Extent3d, PipelineCache, SpecializedMeshPipelines, TextureDescriptor, TextureDimension,
-            TextureFormat, TextureUsages,
+            BindGroupDescriptor, BindGroupEntry, BindingResource, Extent3d, PipelineCache,
+            SpecializedMeshPipelines, TextureDescriptor, TextureDimension, TextureFormat,
+            TextureUsages,
         },
         renderer::RenderDevice,
         texture::{BevyDefault, TextureCache},
@@ -20,9 +21,15 @@ use bevy::{
     utils::HashMap,
 };
 
-use crate::plugin::Outline;
+use crate::{
+    plugin::Outline,
+    stencil_node::{OutlinePipelines, BLUR_SHADER_HANDLE},
+};
 
-use super::{DrawMeshStencil, MeshStencil, StencilPipeline, StencilTexture, STENCIL_SHADER_HANDLE};
+use super::{
+    DrawMeshStencil, MeshStencil, OutlineBindGroups, StencilPipeline, StencilTexture,
+    STENCIL_SHADER_HANDLE,
+};
 
 /// This plugins sets up all the required systems and resources for the stencil phase
 pub struct StencilPassPlugin;
@@ -35,11 +42,14 @@ impl Plugin for StencilPassPlugin {
             Shader::from_wgsl
         );
 
+        load_internal_asset!(app, BLUR_SHADER_HANDLE, "blur.wgsl", Shader::from_wgsl);
+
         let Ok(render_app) = app.get_sub_app_mut(RenderApp) else {
             return;
         };
 
         render_app
+            .init_resource::<OutlinePipelines>()
             .init_resource::<DrawFunctions<MeshStencil>>()
             .add_render_command::<MeshStencil, SetItemPipeline>()
             .add_render_command::<MeshStencil, DrawMeshStencil>()
@@ -48,7 +58,8 @@ impl Plugin for StencilPassPlugin {
             .add_system_to_stage(RenderStage::PhaseSort, sort_phase_system::<MeshStencil>)
             .add_system_to_stage(RenderStage::Prepare, prepare_stencil_textures)
             .add_system_to_stage(RenderStage::Extract, extract_stencil_phase)
-            .add_system_to_stage(RenderStage::Queue, queue_mesh_stencil);
+            .add_system_to_stage(RenderStage::Queue, queue_mesh_stencil)
+            .add_system_to_stage(RenderStage::Queue, queue_outline_bind_groups);
     }
 }
 
@@ -108,6 +119,35 @@ fn queue_mesh_stencil(
     }
 }
 
+// Bind the required data for the outline bind groups
+fn queue_outline_bind_groups(
+    mut commands: Commands,
+    render_device: Res<RenderDevice>,
+    pipelines: Res<OutlinePipelines>,
+    views: Query<(Entity, &StencilTexture)>,
+) {
+    for (entity, textures) in &views {
+        let blur_bind_group = render_device.create_bind_group(&BindGroupDescriptor {
+            label: Some("outline_blur_bind_group"),
+            layout: &pipelines.blur_bind_group_layout,
+            entries: &[
+                BindGroupEntry {
+                    binding: 0,
+                    resource: BindingResource::TextureView(&textures.stencil_texture.default_view),
+                },
+                BindGroupEntry {
+                    binding: 1,
+                    resource: BindingResource::Sampler(&pipelines.sampler),
+                },
+            ],
+        });
+
+        commands
+            .entity(entity)
+            .insert(OutlineBindGroups { blur_bind_group });
+    }
+}
+
 // Prepares the textures used to render the stencil for each camera
 fn prepare_stencil_textures(
     mut commands: Commands,
@@ -116,31 +156,56 @@ fn prepare_stencil_textures(
     views: Query<(Entity, &ExtractedCamera)>,
 ) {
     let mut stencil_textures = HashMap::default();
+    let mut vertical_blur_textures = HashMap::default();
+    let mut horizontal_blur_textures = HashMap::default();
+
     for (entity, camera) in &views {
         let Some(UVec2 { x, y }) = camera.physical_viewport_size else {
             continue;
         };
+        let size = Extent3d {
+            width: x,
+            height: y,
+            depth_or_array_layers: 1,
+        };
+
         let stencil_desc = TextureDescriptor {
             label: Some("stencil_output"),
-            size: Extent3d {
-                // Scale down the view to make the blur pass faster
-                // It doesn't need to be super precise anyway since it's gonna be blurred
-                // TODO Consider making it configurable
-                width: (x / 2).max(1),
-                height: (y / 2).max(1),
-                depth_or_array_layers: 1,
-            },
+            size,
             mip_level_count: 1,
             sample_count: 1,
             dimension: TextureDimension::D2,
             format: TextureFormat::bevy_default(),
             usage: TextureUsages::RENDER_ATTACHMENT | TextureUsages::TEXTURE_BINDING,
         };
-        let texture = stencil_textures
+        let stencil_texture = stencil_textures
             .entry(camera.target.clone())
             .or_insert_with(|| texture_cache.get(&render_device, stencil_desc.clone()))
             .clone();
 
-        commands.entity(entity).insert(StencilTexture { texture });
+        let blur_desc = TextureDescriptor {
+            label: Some("blur_output"),
+            size,
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: TextureDimension::D2,
+            format: TextureFormat::bevy_default(),
+            usage: TextureUsages::RENDER_ATTACHMENT | TextureUsages::TEXTURE_BINDING,
+        };
+        let vertical_blur_texture = vertical_blur_textures
+            .entry(camera.target.clone())
+            .or_insert_with(|| texture_cache.get(&render_device, blur_desc.clone()))
+            .clone();
+
+        let horizontal_blur_texture = horizontal_blur_textures
+            .entry(camera.target.clone())
+            .or_insert_with(|| texture_cache.get(&render_device, blur_desc.clone()))
+            .clone();
+
+        commands.entity(entity).insert(StencilTexture {
+            stencil_texture,
+            vertical_blur_texture,
+            horizontal_blur_texture,
+        });
     }
 }
