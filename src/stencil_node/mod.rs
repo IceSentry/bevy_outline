@@ -55,6 +55,7 @@ impl SpecializedMeshPipeline for StencilPipeline {
         desc.layout = Some(vec![
             self.mesh_pipeline.view_layout.clone(),
             self.mesh_pipeline.mesh_layout.clone(),
+            // TODO add bind group with configurable color
         ]);
         desc.vertex.shader = STENCIL_SHADER_HANDLE.typed::<Shader>();
         desc.fragment = Some(FragmentState {
@@ -104,7 +105,7 @@ impl CachedRenderPipelinePhaseItem for MeshStencil {
     }
 }
 
-type DrawMeshstencil = (
+type DrawMeshStencil = (
     SetItemPipeline,
     SetMeshViewBindGroup<0>,
     SetMeshBindGroup<1>,

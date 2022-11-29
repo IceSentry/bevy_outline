@@ -20,12 +20,9 @@ use bevy::{
     utils::HashMap,
 };
 
-use crate::{
-    plugin::Outline,
-    stencil_node::{DrawMeshstencil, MeshStencil, StencilPipeline, STENCIL_SHADER_HANDLE},
-};
+use crate::plugin::Outline;
 
-use super::StencilTexture;
+use super::{DrawMeshStencil, MeshStencil, StencilPipeline, StencilTexture, STENCIL_SHADER_HANDLE};
 
 /// This plugins sets up all the required systems and resources for the stencil phase
 pub struct StencilPassPlugin;
@@ -45,7 +42,7 @@ impl Plugin for StencilPassPlugin {
         render_app
             .init_resource::<DrawFunctions<MeshStencil>>()
             .add_render_command::<MeshStencil, SetItemPipeline>()
-            .add_render_command::<MeshStencil, DrawMeshstencil>()
+            .add_render_command::<MeshStencil, DrawMeshStencil>()
             .init_resource::<StencilPipeline>()
             .init_resource::<SpecializedMeshPipelines<StencilPipeline>>()
             .add_system_to_stage(RenderStage::PhaseSort, sort_phase_system::<MeshStencil>)
@@ -80,7 +77,7 @@ fn queue_mesh_stencil(
 ) {
     let draw_outline = stencil_draw_functions
         .read()
-        .get_id::<DrawMeshstencil>()
+        .get_id::<DrawMeshStencil>()
         .unwrap();
 
     for (view, visible_entities, mut stencil_phase) in views.iter_mut() {
