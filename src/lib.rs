@@ -340,8 +340,8 @@ fn prepare_outline_resources(
             depth_or_array_layers: 1,
         };
 
-        let stencil_desc = TextureDescriptor {
-            label: Some("stencil_output"),
+        let base_desc = TextureDescriptor {
+            label: None,
             size,
             mip_level_count: 1,
             sample_count: 1,
@@ -349,16 +349,18 @@ fn prepare_outline_resources(
             format: TextureFormat::bevy_default(),
             usage: TextureUsages::RENDER_ATTACHMENT | TextureUsages::TEXTURE_BINDING,
         };
-        let stencil_texture = texture_cache.get(&render_device, stencil_desc.clone());
+
+        let stencil_texture = texture_cache.get(
+            &render_device,
+            TextureDescriptor {
+                label: Some("stencil_output"),
+                ..base_desc
+            },
+        );
 
         let blur_desc = TextureDescriptor {
             label: Some("blur_output"),
-            size,
-            mip_level_count: 1,
-            sample_count: 1,
-            dimension: TextureDimension::D2,
-            format: TextureFormat::bevy_default(),
-            usage: TextureUsages::RENDER_ATTACHMENT | TextureUsages::TEXTURE_BINDING,
+            ..base_desc
         };
         let vertical_blur_texture = texture_cache.get(&render_device, blur_desc.clone());
         let horizontal_blur_texture = texture_cache.get(&render_device, blur_desc.clone());

@@ -51,7 +51,7 @@ macro_rules! bind_group_layout_entries {
             bevy::render::render_resource::BindGroupLayoutEntry {
                 binding: $index,
                 ty: $ty,
-                visibility: bevy::render::render_resource::ShaderStages::VERTEX_FRAGMENT,
+                visibility: bevy::render::render_resource::ShaderStages::all(),
                 count: None
             },
         )*]
