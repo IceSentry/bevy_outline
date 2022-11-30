@@ -133,15 +133,17 @@ fn prepare_outline_bind_groups(
         let Some(UVec2 { x, y }) = camera.physical_viewport_size else {
             continue;
         };
-        let size = Extent3d {
-            width: x,
-            height: y,
+
+        // TODO make this configurable
+        let half_size = Extent3d {
+            width: (x / 2).max(1),
+            height: (y / 2).max(1),
             depth_or_array_layers: 1,
         };
 
         let stencil_desc = TextureDescriptor {
             label: Some("stencil_output"),
-            size,
+            size: half_size,
             mip_level_count: 1,
             sample_count: 1,
             dimension: TextureDimension::D2,
@@ -152,7 +154,7 @@ fn prepare_outline_bind_groups(
 
         let blur_desc = TextureDescriptor {
             label: Some("blur_output"),
-            size,
+            size: half_size,
             mip_level_count: 1,
             sample_count: 1,
             dimension: TextureDimension::D2,
