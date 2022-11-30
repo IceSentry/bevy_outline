@@ -18,7 +18,6 @@ use bevy::{
         view::{ExtractedView, VisibleEntities},
         Extract, RenderApp, RenderStage,
     },
-    utils::HashMap,
 };
 
 use crate::Outline;
@@ -130,10 +129,6 @@ fn prepare_outline_bind_groups(
     mut texture_cache: ResMut<TextureCache>,
     cameras: Query<(Entity, &ExtractedCamera)>,
 ) {
-    let mut stencil_textures = HashMap::default();
-    let mut vertical_blur_textures = HashMap::default();
-    let mut horizontal_blur_textures = HashMap::default();
-
     for (entity, camera) in &cameras {
         let Some(UVec2 { x, y }) = camera.physical_viewport_size else {
             continue;
@@ -153,10 +148,7 @@ fn prepare_outline_bind_groups(
             format: TextureFormat::bevy_default(),
             usage: TextureUsages::RENDER_ATTACHMENT | TextureUsages::TEXTURE_BINDING,
         };
-        let stencil_texture = stencil_textures
-            .entry(camera.target.clone())
-            .or_insert_with(|| texture_cache.get(&render_device, stencil_desc.clone()))
-            .clone();
+        let stencil_texture = texture_cache.get(&render_device, stencil_desc.clone());
 
         let blur_desc = TextureDescriptor {
             label: Some("blur_output"),
@@ -167,15 +159,8 @@ fn prepare_outline_bind_groups(
             format: TextureFormat::bevy_default(),
             usage: TextureUsages::RENDER_ATTACHMENT | TextureUsages::TEXTURE_BINDING,
         };
-        let vertical_blur_texture = vertical_blur_textures
-            .entry(camera.target.clone())
-            .or_insert_with(|| texture_cache.get(&render_device, blur_desc.clone()))
-            .clone();
-
-        let horizontal_blur_texture = horizontal_blur_textures
-            .entry(camera.target.clone())
-            .or_insert_with(|| texture_cache.get(&render_device, blur_desc.clone()))
-            .clone();
+        let vertical_blur_texture = texture_cache.get(&render_device, blur_desc.clone());
+        let horizontal_blur_texture = texture_cache.get(&render_device, blur_desc.clone());
 
         let vertical_blur_bind_group = render_device.create_bind_group(&BindGroupDescriptor {
             label: Some("outline_vertical_blur_bind_group"),
