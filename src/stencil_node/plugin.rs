@@ -62,10 +62,10 @@ impl Plugin for StencilPassPlugin {
             .init_resource::<StencilPipeline>()
             .init_resource::<SpecializedMeshPipelines<StencilPipeline>>()
             .add_system_to_stage(RenderStage::PhaseSort, sort_phase_system::<MeshStencil>)
-            .add_system_to_stage(RenderStage::Prepare, prepare_stencil_textures)
             .add_system_to_stage(RenderStage::Extract, extract_stencil_phase)
-            .add_system_to_stage(RenderStage::Queue, queue_mesh_stencil)
-            .add_system_to_stage(RenderStage::Queue, queue_outline_bind_groups);
+            // .add_system_to_stage(RenderStage::Prepare, prepare_stencil_textures)
+            .add_system_to_stage(RenderStage::Prepare, prepare_outline_bind_groups)
+            .add_system_to_stage(RenderStage::Queue, queue_mesh_stencil);
     }
 }
 
@@ -125,75 +125,19 @@ fn queue_mesh_stencil(
     }
 }
 
-// Bind the required data for the outline bind groups
-fn queue_outline_bind_groups(
+/// Prepares the textures and the bind groups used to render the outline
+fn prepare_outline_bind_groups(
     mut commands: Commands,
     render_device: Res<RenderDevice>,
     pipelines: Res<OutlinePipelines>,
-    views: Query<(Entity, &StencilTexture)>,
-) {
-    for (entity, textures) in &views {
-        let blur_bind_group = render_device.create_bind_group(&BindGroupDescriptor {
-            label: Some("outline_blur_bind_group"),
-            layout: &pipelines.blur_bind_group_layout,
-            entries: &[
-                BindGroupEntry {
-                    binding: 0,
-                    resource: BindingResource::TextureView(&textures.stencil_texture.default_view),
-                },
-                BindGroupEntry {
-                    binding: 1,
-                    resource: BindingResource::Sampler(&pipelines.sampler),
-                },
-            ],
-        });
-
-        let combine_bind_group = render_device.create_bind_group(&BindGroupDescriptor {
-            label: Some("outline_combine_bind_group"),
-            layout: &pipelines.combine_bind_group_layout,
-            entries: &[
-                BindGroupEntry {
-                    binding: 0,
-                    resource: BindingResource::Sampler(&pipelines.sampler),
-                },
-                BindGroupEntry {
-                    binding: 1,
-                    resource: BindingResource::TextureView(&textures.stencil_texture.default_view),
-                },
-                BindGroupEntry {
-                    binding: 2,
-                    resource: BindingResource::TextureView(
-                        &textures.vertical_blur_texture.default_view,
-                    ),
-                },
-                BindGroupEntry {
-                    binding: 3,
-                    resource: BindingResource::TextureView(
-                        &textures.horizontal_blur_texture.default_view,
-                    ),
-                },
-            ],
-        });
-
-        commands.entity(entity).insert(OutlineBindGroups {
-            blur_bind_group,
-            combine_bind_group,
-        });
-    }
-}
-
-// Prepares the textures used to render the stencil for each camera
-fn prepare_stencil_textures(
-    mut commands: Commands,
     mut texture_cache: ResMut<TextureCache>,
-    render_device: Res<RenderDevice>,
-    views: Query<(Entity, &ExtractedCamera)>,
+    cameras: Query<(Entity, &ExtractedCamera)>,
 ) {
     let mut stencil_textures = HashMap::default();
     let mut vertical_blur_textures = HashMap::default();
     let mut horizontal_blur_textures = HashMap::default();
 
-    for (entity, camera) in &views {
+    for (entity, camera) in &cameras {
         let Some(UVec2 { x, y }) = camera.physical_viewport_size else {
             continue;
         };
@@ -236,10 +180,66 @@ fn prepare_stencil_textures(
             .or_insert_with(|| texture_cache.get(&render_device, blur_desc.clone()))
             .clone();
 
-        commands.entity(entity).insert(StencilTexture {
-            stencil_texture,
-            vertical_blur_texture,
-            horizontal_blur_texture,
+        let vertical_blur_bind_group = render_device.create_bind_group(&BindGroupDescriptor {
+            label: Some("outline_vertical_blur_bind_group"),
+            layout: &pipelines.blur_bind_group_layout,
+            entries: &[
+                BindGroupEntry {
+                    binding: 0,
+                    resource: BindingResource::TextureView(&stencil_texture.default_view),
+                },
+                BindGroupEntry {
+                    binding: 1,
+                    resource: BindingResource::Sampler(&pipelines.sampler),
+                },
+            ],
         });
+
+        let horizontal_blur_bind_group = render_device.create_bind_group(&BindGroupDescriptor {
+            label: Some("outline_horizontal_blur_bind_group"),
+            layout: &pipelines.blur_bind_group_layout,
+            entries: &[
+                BindGroupEntry {
+                    binding: 0,
+                    resource: BindingResource::TextureView(&vertical_blur_texture.default_view),
+                },
+                BindGroupEntry {
+                    binding: 1,
+                    resource: BindingResource::Sampler(&pipelines.sampler),
+                },
+            ],
+        });
+
+        let combine_bind_group = render_device.create_bind_group(&BindGroupDescriptor {
+            label: Some("outline_combine_bind_group"),
+            layout: &pipelines.combine_bind_group_layout,
+            entries: &[
+                BindGroupEntry {
+                    binding: 0,
+                    resource: BindingResource::Sampler(&pipelines.sampler),
+                },
+                BindGroupEntry {
+                    binding: 1,
+                    resource: BindingResource::TextureView(&stencil_texture.default_view),
+                },
+                BindGroupEntry {
+                    binding: 2,
+                    resource: BindingResource::TextureView(&horizontal_blur_texture.default_view),
+                },
+            ],
+        });
+
+        commands
+            .entity(entity)
+            .insert(OutlineBindGroups {
+                vertical_blur_bind_group,
+                horizontal_blur_bind_group,
+                combine_bind_group,
+            })
+            .insert(StencilTexture {
+                stencil_texture,
+                vertical_blur_texture,
+                horizontal_blur_texture,
+            });
     }
 }

@@ -31,7 +31,7 @@ fn setup(
     commands.spawn_bundle(PbrBundle {
         mesh: meshes.add(Cube { size: 1.0 }.into()),
         material: materials.add(Color::RED.into()),
-        transform: Transform::from_xyz(-1.25, 0.0, 0.0),
+        transform: Transform::from_xyz(-1.15, 0.0, 0.0),
         ..Default::default()
     });
 
@@ -46,7 +46,7 @@ fn setup(
     commands.spawn_bundle(PbrBundle {
         mesh: meshes.add(Cube { size: 1.0 }.into()),
         material: materials.add(Color::RED.into()),
-        transform: Transform::from_xyz(1.25, 0.0, 0.0),
+        transform: Transform::from_xyz(1.15, 0.0, 0.0),
         ..Default::default()
     });
 }

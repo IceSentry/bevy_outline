@@ -66,6 +66,12 @@ impl Node for StencilNode {
             return Ok(());
         };
 
+        // General algorithm:
+        // Generate a stencil buffer of all the meshes with an outline component
+        // Vertical blur on the stencil buffer
+        // Horizontal blur on the vertical blur buffer
+        // Combine the final texture with the view_targer
+
         // Draw a stencil of all the entities with outlines
         {
             let mut stencil_pass =
@@ -115,12 +121,13 @@ impl Node for StencilNode {
                 ));
 
             vertical_blur_pass.set_render_pipeline(vertical_blur_pipeline);
-            vertical_blur_pass.set_bind_group(0, &bind_groups.blur_bind_group, &[]);
+            vertical_blur_pass.set_bind_group(0, &bind_groups.vertical_blur_bind_group, &[]);
             if let Some(viewport) = camera.viewport.as_ref() {
                 vertical_blur_pass.set_camera_viewport(viewport);
             }
             vertical_blur_pass.draw(0..3, 0..1);
         }
+
         // horizontal blur
         {
             let mut vertical_blur_pass =
@@ -140,7 +147,7 @@ impl Node for StencilNode {
                 ));
 
             vertical_blur_pass.set_render_pipeline(horizontal_blur_pipeline);
-            vertical_blur_pass.set_bind_group(0, &bind_groups.blur_bind_group, &[]);
+            vertical_blur_pass.set_bind_group(0, &bind_groups.horizontal_blur_bind_group, &[]);
             if let Some(viewport) = camera.viewport.as_ref() {
                 vertical_blur_pass.set_camera_viewport(viewport);
             }

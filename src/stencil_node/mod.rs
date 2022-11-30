@@ -27,14 +27,14 @@ use bevy::{
 
 use crate::fullscreen_vertex_shader::fullscreen_shader_vertex_state;
 
-pub const STENCIL_SHADER_HANDLE: HandleUntyped =
-    HandleUntyped::weak_from_u64(Shader::TYPE_UUID, 10400755559809425757);
+const STENCIL_SHADER_HANDLE: HandleUntyped =
+    HandleUntyped::weak_from_u64(Shader::TYPE_UUID, 15139276207022888006);
 
 const BLUR_SHADER_HANDLE: HandleUntyped =
-    HandleUntyped::weak_from_u64(Shader::TYPE_UUID, 929599476923908);
+    HandleUntyped::weak_from_u64(Shader::TYPE_UUID, 14687827633551304793);
 
 const COMBINE_SHADER_HANDLE: HandleUntyped =
-    HandleUntyped::weak_from_u64(Shader::TYPE_UUID, 92959957692390825);
+    HandleUntyped::weak_from_u64(Shader::TYPE_UUID, 13593741836324854485);
 
 #[derive(Component)]
 pub struct StencilTexture {
@@ -45,7 +45,8 @@ pub struct StencilTexture {
 
 #[derive(Component)]
 pub struct OutlineBindGroups {
-    blur_bind_group: BindGroup,
+    vertical_blur_bind_group: BindGroup,
+    horizontal_blur_bind_group: BindGroup,
     combine_bind_group: BindGroup,
 }
 
@@ -115,20 +116,9 @@ impl FromWorld for OutlinePipelines {
                         visibility: ShaderStages::FRAGMENT,
                         count: None,
                     },
-                    // vertical blur texture
+                    // blur texture
                     BindGroupLayoutEntry {
                         binding: 2,
-                        ty: BindingType::Texture {
-                            sample_type: TextureSampleType::Float { filterable: true },
-                            view_dimension: TextureViewDimension::D2,
-                            multisampled: false,
-                        },
-                        visibility: ShaderStages::FRAGMENT,
-                        count: None,
-                    },
-                    // horizontal blur texture
-                    BindGroupLayoutEntry {
-                        binding: 3,
                         ty: BindingType::Texture {
                             sample_type: TextureSampleType::Float { filterable: true },
                             view_dimension: TextureViewDimension::D2,
@@ -142,11 +132,13 @@ impl FromWorld for OutlinePipelines {
 
         let mut pipeline_cache = world.resource_mut::<PipelineCache>();
 
+        let blur_vertex_state = fullscreen_shader_vertex_state();
+
         let vertical_blur_pipeline =
             pipeline_cache.queue_render_pipeline(RenderPipelineDescriptor {
                 label: Some("vertical_blur_pipeline".into()),
                 layout: Some(vec![blur_bind_group_layout.clone()]),
-                vertex: fullscreen_shader_vertex_state(),
+                vertex: blur_vertex_state.clone(),
                 fragment: Some(FragmentState {
                     shader: BLUR_SHADER_HANDLE.typed::<Shader>(),
                     shader_defs: vec![],
@@ -166,7 +158,7 @@ impl FromWorld for OutlinePipelines {
             pipeline_cache.queue_render_pipeline(RenderPipelineDescriptor {
                 label: Some("horizontal_blur_pipeline".into()),
                 layout: Some(vec![blur_bind_group_layout.clone()]),
-                vertex: fullscreen_shader_vertex_state(),
+                vertex: blur_vertex_state,
                 fragment: Some(FragmentState {
                     shader: BLUR_SHADER_HANDLE.typed::<Shader>(),
                     shader_defs: vec![],
