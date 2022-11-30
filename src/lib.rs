@@ -1,5 +1,6 @@
 mod fullscreen_vertex_shader;
 pub mod node;
+mod utils;
 
 use bevy::{
     asset::load_internal_asset,
@@ -21,13 +22,12 @@ use bevy::{
             DrawFunctions, EntityPhaseItem, PhaseItem, RenderPhase, SetItemPipeline,
         },
         render_resource::{
-            AddressMode, BindGroup, BindGroupDescriptor, BindGroupEntry, BindGroupLayout,
-            BindGroupLayoutDescriptor, BindGroupLayoutEntry, BindingResource, BindingType,
-            BlendState, CachedRenderPipelineId, ColorTargetState, ColorWrites, Extent3d,
-            FilterMode, FragmentState, MultisampleState, PipelineCache, PrimitiveState,
-            RenderPipelineDescriptor, Sampler, SamplerBindingType, SamplerDescriptor, ShaderStages,
-            SpecializedMeshPipeline, SpecializedMeshPipelineError, SpecializedMeshPipelines,
-            TextureDescriptor, TextureDimension, TextureFormat, TextureSampleType, TextureUsages,
+            AddressMode, BindGroup, BindGroupDescriptor, BindGroupLayout,
+            BindGroupLayoutDescriptor, BindingResource, BindingType, BlendState,
+            CachedRenderPipelineId, Extent3d, FilterMode, PipelineCache, RenderPipelineDescriptor,
+            Sampler, SamplerBindingType, SamplerDescriptor, SpecializedMeshPipeline,
+            SpecializedMeshPipelineError, SpecializedMeshPipelines, TextureDescriptor,
+            TextureDimension, TextureFormat, TextureSampleType, TextureUsages,
             TextureViewDimension,
         },
         renderer::RenderDevice,
@@ -37,7 +37,7 @@ use bevy::{
     },
     utils::{FixedState, FloatOrd, Hashed},
 };
-use fullscreen_vertex_shader::fullscreen_shader_vertex_state;
+use utils::{color_target, fragment_state, RenderPipelineDescriptorBuilder};
 
 use crate::{fullscreen_vertex_shader::FULLSCREEN_SHADER_HANDLE, node::OutlineNode};
 
@@ -88,7 +88,6 @@ impl Plugin for BlurredOutlinePlugin {
             "stencil.wgsl",
             Shader::from_wgsl
         );
-
         load_internal_asset!(app, BLUR_SHADER_HANDLE, "blur.wgsl", Shader::from_wgsl);
         load_internal_asset!(
             app,
@@ -105,14 +104,13 @@ impl Plugin for BlurredOutlinePlugin {
 
         render_app
             .init_resource::<OutlinePipelines>()
-            .init_resource::<DrawFunctions<MeshStencil>>()
-            .add_render_command::<MeshStencil, SetItemPipeline>()
-            .add_render_command::<MeshStencil, DrawMeshStencil>()
             .init_resource::<StencilPipeline>()
             .init_resource::<SpecializedMeshPipelines<StencilPipeline>>()
+            .init_resource::<DrawFunctions<MeshStencil>>()
+            .add_render_command::<MeshStencil, DrawMeshStencil>()
             .add_system_to_stage(RenderStage::PhaseSort, sort_phase_system::<MeshStencil>)
             .add_system_to_stage(RenderStage::Extract, extract_stencil_phase)
-            .add_system_to_stage(RenderStage::Prepare, prepare_outline_bind_groups)
+            .add_system_to_stage(RenderStage::Prepare, prepare_outline_resources)
             .add_system_to_stage(RenderStage::Queue, queue_mesh_stencil);
 
         {
@@ -206,16 +204,7 @@ impl SpecializedMeshPipeline for StencilPipeline {
             // TODO add bind group with configurable color
         ]);
         desc.vertex.shader = STENCIL_SHADER_HANDLE.typed::<Shader>();
-        desc.fragment = Some(FragmentState {
-            shader: STENCIL_SHADER_HANDLE.typed::<Shader>(),
-            shader_defs: vec![],
-            entry_point: "fragment".into(),
-            targets: vec![Some(ColorTargetState {
-                format: TextureFormat::bevy_default(),
-                blend: None,
-                write_mask: ColorWrites::ALL,
-            })],
-        });
+        desc.fragment = fragment_state(STENCIL_SHADER_HANDLE, "fragment", &[color_target(None)]);
         desc.depth_stencil = None;
 
         Ok(desc)
@@ -250,130 +239,66 @@ impl FromWorld for OutlinePipelines {
             mag_filter: FilterMode::Linear,
             address_mode_u: AddressMode::ClampToEdge,
             address_mode_v: AddressMode::ClampToEdge,
-            ..Default::default()
+            ..default()
         });
+        let texture = BindingType::Texture {
+            sample_type: TextureSampleType::Float { filterable: true },
+            view_dimension: TextureViewDimension::D2,
+            multisampled: false,
+        };
+
         let blur_bind_group_layout =
             render_device.create_bind_group_layout(&BindGroupLayoutDescriptor {
                 label: Some("blur_bind_group_layout"),
-                entries: &[
+                entries: &bind_group_layout_entries![
                     // stencil texture
-                    BindGroupLayoutEntry {
-                        binding: 0,
-                        ty: BindingType::Texture {
-                            sample_type: TextureSampleType::Float { filterable: true },
-                            view_dimension: TextureViewDimension::D2,
-                            multisampled: false,
-                        },
-                        visibility: ShaderStages::FRAGMENT,
-                        count: None,
-                    },
+                    0 => texture,
                     // sampler
-                    BindGroupLayoutEntry {
-                        binding: 1,
-                        ty: BindingType::Sampler(SamplerBindingType::Filtering),
-                        visibility: ShaderStages::FRAGMENT,
-                        count: None,
-                    },
+                    1 => BindingType::Sampler(SamplerBindingType::Filtering),
                 ],
             });
         let combine_bind_group_layout =
             render_device.create_bind_group_layout(&BindGroupLayoutDescriptor {
                 label: Some("combine_bind_group_layout"),
-                entries: &[
+                entries: &bind_group_layout_entries![
                     // sampler
-                    BindGroupLayoutEntry {
-                        binding: 0,
-                        ty: BindingType::Sampler(SamplerBindingType::Filtering),
-                        visibility: ShaderStages::FRAGMENT,
-                        count: None,
-                    },
+                    0 => BindingType::Sampler(SamplerBindingType::Filtering),
                     // stencil texture
-                    BindGroupLayoutEntry {
-                        binding: 1,
-                        ty: BindingType::Texture {
-                            sample_type: TextureSampleType::Float { filterable: true },
-                            view_dimension: TextureViewDimension::D2,
-                            multisampled: false,
-                        },
-                        visibility: ShaderStages::FRAGMENT,
-                        count: None,
-                    },
+                    1 => texture,
                     // blur texture
-                    BindGroupLayoutEntry {
-                        binding: 2,
-                        ty: BindingType::Texture {
-                            sample_type: TextureSampleType::Float { filterable: true },
-                            view_dimension: TextureViewDimension::D2,
-                            multisampled: false,
-                        },
-                        visibility: ShaderStages::FRAGMENT,
-                        count: None,
-                    },
+                    2 => texture,
                 ],
             });
 
         let mut pipeline_cache = world.resource_mut::<PipelineCache>();
 
-        let blur_vertex_state = fullscreen_shader_vertex_state();
+        let vertical_blur_pipeline = pipeline_cache.queue_render_pipeline(
+            RenderPipelineDescriptorBuilder::new_fullscreen()
+                .label("vertical_blur_pipeline")
+                .fragment(BLUR_SHADER_HANDLE, "vertical_blur", &[color_target(None)])
+                .layout(vec![blur_bind_group_layout.clone()])
+                .build(),
+        );
 
-        let vertical_blur_pipeline =
-            pipeline_cache.queue_render_pipeline(RenderPipelineDescriptor {
-                label: Some("vertical_blur_pipeline".into()),
-                layout: Some(vec![blur_bind_group_layout.clone()]),
-                vertex: blur_vertex_state.clone(),
-                fragment: Some(FragmentState {
-                    shader: BLUR_SHADER_HANDLE.typed::<Shader>(),
-                    shader_defs: vec![],
-                    entry_point: "vertical_blur".into(),
-                    targets: vec![Some(ColorTargetState {
-                        format: TextureFormat::bevy_default(),
-                        blend: None,
-                        write_mask: ColorWrites::ALL,
-                    })],
-                }),
-                primitive: PrimitiveState::default(),
-                depth_stencil: None,
-                multisample: MultisampleState::default(),
-            });
+        let horizontal_blur_pipeline = pipeline_cache.queue_render_pipeline(
+            RenderPipelineDescriptorBuilder::new_fullscreen()
+                .label("horizontal_blur_pipeline")
+                .fragment(BLUR_SHADER_HANDLE, "horizontal_blur", &[color_target(None)])
+                .layout(vec![blur_bind_group_layout.clone()])
+                .build(),
+        );
 
-        let horizontal_blur_pipeline =
-            pipeline_cache.queue_render_pipeline(RenderPipelineDescriptor {
-                label: Some("horizontal_blur_pipeline".into()),
-                layout: Some(vec![blur_bind_group_layout.clone()]),
-                vertex: blur_vertex_state,
-                fragment: Some(FragmentState {
-                    shader: BLUR_SHADER_HANDLE.typed::<Shader>(),
-                    shader_defs: vec![],
-                    entry_point: "horizontal_blur".into(),
-                    targets: vec![Some(ColorTargetState {
-                        format: TextureFormat::bevy_default(),
-                        blend: None,
-                        write_mask: ColorWrites::ALL,
-                    })],
-                }),
-                primitive: PrimitiveState::default(),
-                depth_stencil: None,
-                multisample: MultisampleState::default(),
-            });
-
-        let combine_pipeline = pipeline_cache.queue_render_pipeline(RenderPipelineDescriptor {
-            label: Some("combine_pipeline".into()),
-            layout: Some(vec![combine_bind_group_layout.clone()]),
-            vertex: fullscreen_shader_vertex_state(),
-            fragment: Some(FragmentState {
-                shader: COMBINE_SHADER_HANDLE.typed::<Shader>(),
-                shader_defs: vec![],
-                entry_point: "combine".into(),
-                targets: vec![Some(ColorTargetState {
-                    format: TextureFormat::bevy_default(),
-                    blend: Some(BlendState::ALPHA_BLENDING),
-                    write_mask: ColorWrites::ALL,
-                })],
-            }),
-            primitive: PrimitiveState::default(),
-            depth_stencil: None,
-            multisample: MultisampleState::default(),
-        });
+        let combine_pipeline = pipeline_cache.queue_render_pipeline(
+            RenderPipelineDescriptorBuilder::new_fullscreen()
+                .label("combine_pipeline")
+                .fragment(
+                    COMBINE_SHADER_HANDLE,
+                    "combine",
+                    &[color_target(Some(BlendState::ALPHA_BLENDING))],
+                )
+                .layout(vec![combine_bind_group_layout.clone()])
+                .build(),
+        );
 
         Self {
             sampler,
@@ -396,7 +321,7 @@ fn extract_stencil_phase(mut commands: Commands, cameras: Extract<Query<Entity, 
 }
 
 /// Prepares the textures and the bind groups used to render the outline
-fn prepare_outline_bind_groups(
+fn prepare_outline_resources(
     mut commands: Commands,
     render_device: Res<RenderDevice>,
     pipelines: Res<OutlinePipelines>,
@@ -409,7 +334,7 @@ fn prepare_outline_bind_groups(
         };
 
         // TODO make this configurable
-        let half_size = Extent3d {
+        let size = Extent3d {
             width: (x / 2).max(1),
             height: (y / 2).max(1),
             depth_or_array_layers: 1,
@@ -417,7 +342,7 @@ fn prepare_outline_bind_groups(
 
         let stencil_desc = TextureDescriptor {
             label: Some("stencil_output"),
-            size: half_size,
+            size,
             mip_level_count: 1,
             sample_count: 1,
             dimension: TextureDimension::D2,
@@ -428,7 +353,7 @@ fn prepare_outline_bind_groups(
 
         let blur_desc = TextureDescriptor {
             label: Some("blur_output"),
-            size: half_size,
+            size,
             mip_level_count: 1,
             sample_count: 1,
             dimension: TextureDimension::D2,
@@ -441,49 +366,28 @@ fn prepare_outline_bind_groups(
         let vertical_blur_bind_group = render_device.create_bind_group(&BindGroupDescriptor {
             label: Some("outline_vertical_blur_bind_group"),
             layout: &pipelines.blur_bind_group_layout,
-            entries: &[
-                BindGroupEntry {
-                    binding: 0,
-                    resource: BindingResource::TextureView(&stencil_texture.default_view),
-                },
-                BindGroupEntry {
-                    binding: 1,
-                    resource: BindingResource::Sampler(&pipelines.sampler),
-                },
+            entries: &bind_group_entries![
+                0 => BindingResource::TextureView(&stencil_texture.default_view),
+                1 => BindingResource::Sampler(&pipelines.sampler),
             ],
         });
 
         let horizontal_blur_bind_group = render_device.create_bind_group(&BindGroupDescriptor {
             label: Some("outline_horizontal_blur_bind_group"),
             layout: &pipelines.blur_bind_group_layout,
-            entries: &[
-                BindGroupEntry {
-                    binding: 0,
-                    resource: BindingResource::TextureView(&vertical_blur_texture.default_view),
-                },
-                BindGroupEntry {
-                    binding: 1,
-                    resource: BindingResource::Sampler(&pipelines.sampler),
-                },
+            entries: &bind_group_entries![
+                0 => BindingResource::TextureView(&vertical_blur_texture.default_view),
+                1 => BindingResource::Sampler(&pipelines.sampler),
             ],
         });
 
         let combine_bind_group = render_device.create_bind_group(&BindGroupDescriptor {
             label: Some("outline_combine_bind_group"),
             layout: &pipelines.combine_bind_group_layout,
-            entries: &[
-                BindGroupEntry {
-                    binding: 0,
-                    resource: BindingResource::Sampler(&pipelines.sampler),
-                },
-                BindGroupEntry {
-                    binding: 1,
-                    resource: BindingResource::TextureView(&stencil_texture.default_view),
-                },
-                BindGroupEntry {
-                    binding: 2,
-                    resource: BindingResource::TextureView(&horizontal_blur_texture.default_view),
-                },
+            entries: &bind_group_entries![
+                0 => BindingResource::Sampler(&pipelines.sampler),
+                1 => BindingResource::TextureView(&stencil_texture.default_view),
+                2 => BindingResource::TextureView(&horizontal_blur_texture.default_view),
             ],
         });
 

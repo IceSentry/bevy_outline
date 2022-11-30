@@ -16,7 +16,7 @@ use crate::{MeshStencil, OutlineResources};
 
 use super::OutlinePipelines;
 
-/// Render graph node for producing stencils from meshes.
+/// Render node for drawing blurred outlines of selected meshes
 pub struct OutlineNode {
     query: QueryState<(
         &'static ViewTarget,
