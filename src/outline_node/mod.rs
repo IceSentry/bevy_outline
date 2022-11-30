@@ -37,7 +37,7 @@ const COMBINE_SHADER_HANDLE: HandleUntyped =
     HandleUntyped::weak_from_u64(Shader::TYPE_UUID, 13593741836324854485);
 
 #[derive(Component)]
-pub struct StencilTexture {
+pub struct OutlineTextures {
     pub stencil_texture: CachedTexture,
     pub vertical_blur_texture: CachedTexture,
     pub horizontal_blur_texture: CachedTexture,

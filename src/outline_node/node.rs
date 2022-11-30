@@ -12,30 +12,30 @@ use bevy::{
     },
 };
 
-use super::{MeshStencil, OutlineBindGroups, OutlinePipelines, StencilTexture};
+use super::{MeshStencil, OutlineBindGroups, OutlinePipelines, OutlineTextures};
 
 /// Render graph node for producing stencils from meshes.
-pub struct StencilNode {
+pub struct OutlineNode {
     query: QueryState<(
         &'static ViewTarget,
         &'static ExtractedCamera,
         &'static RenderPhase<MeshStencil>,
-        &'static StencilTexture,
+        &'static OutlineTextures,
         &'static OutlineBindGroups,
     )>,
 }
 
-impl StencilNode {
+impl OutlineNode {
     pub const IN_VIEW: &'static str = "view";
 
-    pub fn new(world: &mut World) -> StencilNode {
-        StencilNode {
+    pub fn new(world: &mut World) -> OutlineNode {
+        OutlineNode {
             query: QueryState::new(world),
         }
     }
 }
 
-impl Node for StencilNode {
+impl Node for OutlineNode {
     fn input(&self) -> Vec<SlotInfo> {
         vec![SlotInfo::new(Self::IN_VIEW, SlotType::Entity)]
     }

@@ -22,12 +22,12 @@ use bevy::{
 };
 
 use crate::{
+    outline_node::{OutlinePipelines, BLUR_SHADER_HANDLE, COMBINE_SHADER_HANDLE},
     plugin::Outline,
-    stencil_node::{OutlinePipelines, BLUR_SHADER_HANDLE, COMBINE_SHADER_HANDLE},
 };
 
 use super::{
-    DrawMeshStencil, MeshStencil, OutlineBindGroups, StencilPipeline, StencilTexture,
+    DrawMeshStencil, MeshStencil, OutlineBindGroups, OutlineTextures, StencilPipeline,
     STENCIL_SHADER_HANDLE,
 };
 
@@ -236,7 +236,7 @@ fn prepare_outline_bind_groups(
                 horizontal_blur_bind_group,
                 combine_bind_group,
             })
-            .insert(StencilTexture {
+            .insert(OutlineTextures {
                 stencil_texture,
                 vertical_blur_texture,
                 horizontal_blur_texture,

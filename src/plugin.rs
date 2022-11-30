@@ -11,7 +11,7 @@ use bevy::{
 
 use crate::{
     fullscreen_vertex_shader::FULLSCREEN_SHADER_HANDLE,
-    stencil_node::{node::StencilNode, plugin::StencilPassPlugin},
+    outline_node::{node::OutlineNode, plugin::StencilPassPlugin},
 };
 
 #[derive(Component, Clone, Copy)]
@@ -55,7 +55,7 @@ impl Plugin for BlurredOutlinePlugin {
         };
 
         {
-            let stencil_node = StencilNode::new(&mut render_app.world);
+            let stencil_node = OutlineNode::new(&mut render_app.world);
             let mut graph = render_app.world.resource_mut::<RenderGraph>();
             let draw_3d_graph = graph.get_sub_graph_mut(core_3d::graph::NAME).unwrap();
 
@@ -66,7 +66,7 @@ impl Plugin for BlurredOutlinePlugin {
                     draw_3d_graph.input_node().unwrap().id,
                     graph::input::VIEW_ENTITY,
                     graph::node::STENCIL_PASS,
-                    StencilNode::IN_VIEW,
+                    OutlineNode::IN_VIEW,
                 )
                 .unwrap();
 
