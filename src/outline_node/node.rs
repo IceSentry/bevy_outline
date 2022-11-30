@@ -82,7 +82,7 @@ impl Node for OutlineNode {
                             view: &textures.stencil_texture.default_view,
                             resolve_target: None,
                             ops: Operations {
-                                load: LoadOp::Clear(Color::BLACK.into()),
+                                load: LoadOp::Clear(Color::NONE.into()),
                                 store: true,
                             },
                         })],
@@ -112,7 +112,7 @@ impl Node for OutlineNode {
                             view: &textures.vertical_blur_texture.default_view,
                             resolve_target: None,
                             ops: Operations {
-                                load: LoadOp::Clear(Color::BLACK.into()),
+                                load: LoadOp::Clear(Color::NONE.into()),
                                 store: true,
                             },
                         })],
@@ -138,7 +138,7 @@ impl Node for OutlineNode {
                             view: &textures.horizontal_blur_texture.default_view,
                             resolve_target: None,
                             ops: Operations {
-                                load: LoadOp::Clear(Color::BLACK.into()),
+                                load: LoadOp::Clear(Color::NONE.into()),
                                 store: true,
                             },
                         })],

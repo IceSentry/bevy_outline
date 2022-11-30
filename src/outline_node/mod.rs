@@ -13,9 +13,9 @@ use bevy::{
         },
         render_resource::{
             AddressMode, BindGroup, BindGroupLayout, BindGroupLayoutDescriptor,
-            BindGroupLayoutEntry, BindingType, CachedRenderPipelineId, ColorTargetState,
-            ColorWrites, FilterMode, FragmentState, MultisampleState, PipelineCache,
-            PrimitiveState, RenderPipelineDescriptor, Sampler, SamplerBindingType,
+            BindGroupLayoutEntry, BindingType, BlendState, CachedRenderPipelineId,
+            ColorTargetState, ColorWrites, FilterMode, FragmentState, MultisampleState,
+            PipelineCache, PrimitiveState, RenderPipelineDescriptor, Sampler, SamplerBindingType,
             SamplerDescriptor, ShaderStages, SpecializedMeshPipeline, SpecializedMeshPipelineError,
             TextureFormat, TextureSampleType, TextureViewDimension,
         },
@@ -184,7 +184,7 @@ impl FromWorld for OutlinePipelines {
                 entry_point: "combine".into(),
                 targets: vec![Some(ColorTargetState {
                     format: TextureFormat::bevy_default(),
-                    blend: None,
+                    blend: Some(BlendState::ALPHA_BLENDING),
                     write_mask: ColorWrites::ALL,
                 })],
             }),
