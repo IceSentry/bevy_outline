@@ -12,7 +12,9 @@ use bevy::{
     },
 };
 
-use super::{MeshStencil, OutlineBindGroups, OutlinePipelines, OutlineTextures};
+use crate::{MeshStencil, OutlineResources};
+
+use super::OutlinePipelines;
 
 /// Render graph node for producing stencils from meshes.
 pub struct OutlineNode {
@@ -20,8 +22,7 @@ pub struct OutlineNode {
         &'static ViewTarget,
         &'static ExtractedCamera,
         &'static RenderPhase<MeshStencil>,
-        &'static OutlineTextures,
-        &'static OutlineBindGroups,
+        &'static OutlineResources,
     )>,
 }
 
@@ -51,7 +52,7 @@ impl Node for OutlineNode {
         world: &World,
     ) -> Result<(), bevy::render::render_graph::NodeRunError> {
         let view_entity = graph.get_input_entity(Self::IN_VIEW)?;
-        let Ok((view_target, camera, stencil_phase, textures, bind_groups)) = self.query.get_manual(world, view_entity) else {
+        let Ok((view_target, camera, stencil_phase, resources)) = self.query.get_manual(world, view_entity) else {
             return Ok(());
         };
 
@@ -79,7 +80,7 @@ impl Node for OutlineNode {
                     &RenderPassDescriptor {
                         label: Some("outline_stencil_pass"),
                         color_attachments: &[Some(RenderPassColorAttachment {
-                            view: &textures.stencil_texture.default_view,
+                            view: &resources.stencil_texture.default_view,
                             resolve_target: None,
                             ops: Operations {
                                 load: LoadOp::Clear(Color::NONE.into()),
@@ -109,7 +110,7 @@ impl Node for OutlineNode {
                     &RenderPassDescriptor {
                         label: Some("outline_vertical_blur_pass"),
                         color_attachments: &[Some(RenderPassColorAttachment {
-                            view: &textures.vertical_blur_texture.default_view,
+                            view: &resources.vertical_blur_texture.default_view,
                             resolve_target: None,
                             ops: Operations {
                                 load: LoadOp::Clear(Color::NONE.into()),
@@ -121,7 +122,7 @@ impl Node for OutlineNode {
                 ));
 
             vertical_blur_pass.set_render_pipeline(vertical_blur_pipeline);
-            vertical_blur_pass.set_bind_group(0, &bind_groups.vertical_blur_bind_group, &[]);
+            vertical_blur_pass.set_bind_group(0, &resources.vertical_blur_bind_group, &[]);
             if let Some(viewport) = camera.viewport.as_ref() {
                 vertical_blur_pass.set_camera_viewport(viewport);
             }
@@ -135,7 +136,7 @@ impl Node for OutlineNode {
                     &RenderPassDescriptor {
                         label: Some("outline_horizontal_blur_pass"),
                         color_attachments: &[Some(RenderPassColorAttachment {
-                            view: &textures.horizontal_blur_texture.default_view,
+                            view: &resources.horizontal_blur_texture.default_view,
                             resolve_target: None,
                             ops: Operations {
                                 load: LoadOp::Clear(Color::NONE.into()),
@@ -147,7 +148,7 @@ impl Node for OutlineNode {
                 ));
 
             vertical_blur_pass.set_render_pipeline(horizontal_blur_pipeline);
-            vertical_blur_pass.set_bind_group(0, &bind_groups.horizontal_blur_bind_group, &[]);
+            vertical_blur_pass.set_bind_group(0, &resources.horizontal_blur_bind_group, &[]);
             if let Some(viewport) = camera.viewport.as_ref() {
                 vertical_blur_pass.set_camera_viewport(viewport);
             }
@@ -173,7 +174,7 @@ impl Node for OutlineNode {
                 ));
 
             combine_pass.set_render_pipeline(combine_pipeline);
-            combine_pass.set_bind_group(0, &bind_groups.combine_bind_group, &[]);
+            combine_pass.set_bind_group(0, &resources.combine_bind_group, &[]);
             if let Some(viewport) = camera.viewport.as_ref() {
                 combine_pass.set_camera_viewport(viewport);
             }

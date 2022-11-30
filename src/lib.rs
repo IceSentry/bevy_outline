@@ -1,21 +1,54 @@
 mod fullscreen_vertex_shader;
-pub mod outline_node;
+pub mod node;
 
 use bevy::{
     asset::load_internal_asset,
     core_pipeline::core_3d,
-    prelude::*,
-    render::{
-        extract_component::{ExtractComponent, ExtractComponentPlugin},
-        render_graph::RenderGraph,
-        RenderApp,
+    pbr::{
+        DrawMesh, MeshPipeline, MeshPipelineKey, MeshUniform, SetMeshBindGroup,
+        SetMeshViewBindGroup,
     },
+    prelude::*,
+    reflect::TypeUuid,
+    render::{
+        camera::ExtractedCamera,
+        extract_component::{ExtractComponent, ExtractComponentPlugin},
+        mesh::InnerMeshVertexBufferLayout,
+        render_asset::RenderAssets,
+        render_graph::RenderGraph,
+        render_phase::{
+            sort_phase_system, AddRenderCommand, CachedRenderPipelinePhaseItem, DrawFunctionId,
+            DrawFunctions, EntityPhaseItem, PhaseItem, RenderPhase, SetItemPipeline,
+        },
+        render_resource::{
+            AddressMode, BindGroup, BindGroupDescriptor, BindGroupEntry, BindGroupLayout,
+            BindGroupLayoutDescriptor, BindGroupLayoutEntry, BindingResource, BindingType,
+            BlendState, CachedRenderPipelineId, ColorTargetState, ColorWrites, Extent3d,
+            FilterMode, FragmentState, MultisampleState, PipelineCache, PrimitiveState,
+            RenderPipelineDescriptor, Sampler, SamplerBindingType, SamplerDescriptor, ShaderStages,
+            SpecializedMeshPipeline, SpecializedMeshPipelineError, SpecializedMeshPipelines,
+            TextureDescriptor, TextureDimension, TextureFormat, TextureSampleType, TextureUsages,
+            TextureViewDimension,
+        },
+        renderer::RenderDevice,
+        texture::{BevyDefault, CachedTexture, TextureCache},
+        view::{ExtractedView, VisibleEntities},
+        Extract, RenderApp, RenderStage,
+    },
+    utils::{FixedState, FloatOrd, Hashed},
 };
+use fullscreen_vertex_shader::fullscreen_shader_vertex_state;
 
-use crate::{
-    fullscreen_vertex_shader::FULLSCREEN_SHADER_HANDLE,
-    outline_node::{node::OutlineNode, plugin::OutlineNodePlugin},
-};
+use crate::{fullscreen_vertex_shader::FULLSCREEN_SHADER_HANDLE, node::OutlineNode};
+
+const STENCIL_SHADER_HANDLE: HandleUntyped =
+    HandleUntyped::weak_from_u64(Shader::TYPE_UUID, 15139276207022888006);
+
+const BLUR_SHADER_HANDLE: HandleUntyped =
+    HandleUntyped::weak_from_u64(Shader::TYPE_UUID, 14687827633551304793);
+
+const COMBINE_SHADER_HANDLE: HandleUntyped =
+    HandleUntyped::weak_from_u64(Shader::TYPE_UUID, 13593741836324854485);
 
 #[derive(Component, Clone, Copy)]
 pub struct Outline;
@@ -30,13 +63,13 @@ impl ExtractComponent for Outline {
     }
 }
 
-mod graph {
+pub mod graph {
     pub mod input {
         pub const VIEW_ENTITY: &str = "view_entity";
     }
 
     pub mod node {
-        pub const OUTLINE_PASS: &str = "stencil_pass";
+        pub const OUTLINE_PASS: &str = "outline_pass";
     }
 }
 
@@ -49,13 +82,38 @@ impl Plugin for BlurredOutlinePlugin {
             "fullscreen_vertex_shader/fullscreen.wgsl",
             Shader::from_wgsl
         );
+        load_internal_asset!(
+            app,
+            STENCIL_SHADER_HANDLE,
+            "stencil.wgsl",
+            Shader::from_wgsl
+        );
 
-        app.add_plugin(OutlineNodePlugin)
-            .add_plugin(ExtractComponentPlugin::<Outline>::default());
+        load_internal_asset!(app, BLUR_SHADER_HANDLE, "blur.wgsl", Shader::from_wgsl);
+        load_internal_asset!(
+            app,
+            COMBINE_SHADER_HANDLE,
+            "combine.wgsl",
+            Shader::from_wgsl
+        );
+
+        app.add_plugin(ExtractComponentPlugin::<Outline>::default());
 
         let Ok(render_app) = app.get_sub_app_mut(RenderApp) else {
             return;
         };
+
+        render_app
+            .init_resource::<OutlinePipelines>()
+            .init_resource::<DrawFunctions<MeshStencil>>()
+            .add_render_command::<MeshStencil, SetItemPipeline>()
+            .add_render_command::<MeshStencil, DrawMeshStencil>()
+            .init_resource::<StencilPipeline>()
+            .init_resource::<SpecializedMeshPipelines<StencilPipeline>>()
+            .add_system_to_stage(RenderStage::PhaseSort, sort_phase_system::<MeshStencil>)
+            .add_system_to_stage(RenderStage::Extract, extract_stencil_phase)
+            .add_system_to_stage(RenderStage::Prepare, prepare_outline_bind_groups)
+            .add_system_to_stage(RenderStage::Queue, queue_mesh_stencil);
 
         {
             let stencil_node = OutlineNode::new(&mut render_app.world);
@@ -73,10 +131,416 @@ impl Plugin for BlurredOutlinePlugin {
                 )
                 .unwrap();
 
-            // MAIN_PASS -> STENCIL
+            // MAIN_PASS -> OUTLINE
             draw_3d_graph
                 .add_node_edge(core_3d::graph::node::MAIN_PASS, graph::node::OUTLINE_PASS)
                 .unwrap();
+        }
+    }
+}
+
+struct MeshStencil {
+    pub distance: f32,
+    pub pipeline: CachedRenderPipelineId,
+    pub entity: Entity,
+    pub draw_function: DrawFunctionId,
+}
+
+impl PhaseItem for MeshStencil {
+    type SortKey = FloatOrd;
+
+    fn sort_key(&self) -> Self::SortKey {
+        FloatOrd(self.distance)
+    }
+
+    fn draw_function(&self) -> DrawFunctionId {
+        self.draw_function
+    }
+}
+
+impl EntityPhaseItem for MeshStencil {
+    fn entity(&self) -> Entity {
+        self.entity
+    }
+}
+
+impl CachedRenderPipelinePhaseItem for MeshStencil {
+    fn cached_pipeline(&self) -> CachedRenderPipelineId {
+        self.pipeline
+    }
+}
+
+type DrawMeshStencil = (
+    SetItemPipeline,
+    SetMeshViewBindGroup<0>,
+    SetMeshBindGroup<1>,
+    DrawMesh,
+);
+
+pub struct StencilPipeline {
+    mesh_pipeline: MeshPipeline,
+}
+
+impl FromWorld for StencilPipeline {
+    fn from_world(world: &mut World) -> Self {
+        let mesh_pipeline = world.resource::<MeshPipeline>().clone();
+        StencilPipeline { mesh_pipeline }
+    }
+}
+
+impl SpecializedMeshPipeline for StencilPipeline {
+    type Key = MeshPipelineKey;
+
+    fn specialize(
+        &self,
+        key: Self::Key,
+        layout: &Hashed<InnerMeshVertexBufferLayout, FixedState>,
+    ) -> Result<RenderPipelineDescriptor, SpecializedMeshPipelineError> {
+        let mut desc = self.mesh_pipeline.specialize(key, layout)?;
+
+        desc.label = Some("mesh_stencil_pipeline".into());
+
+        desc.layout = Some(vec![
+            self.mesh_pipeline.view_layout.clone(),
+            self.mesh_pipeline.mesh_layout.clone(),
+            // TODO add bind group with configurable color
+        ]);
+        desc.vertex.shader = STENCIL_SHADER_HANDLE.typed::<Shader>();
+        desc.fragment = Some(FragmentState {
+            shader: STENCIL_SHADER_HANDLE.typed::<Shader>(),
+            shader_defs: vec![],
+            entry_point: "fragment".into(),
+            targets: vec![Some(ColorTargetState {
+                format: TextureFormat::bevy_default(),
+                blend: None,
+                write_mask: ColorWrites::ALL,
+            })],
+        });
+        desc.depth_stencil = None;
+
+        Ok(desc)
+    }
+}
+
+#[derive(Component)]
+struct OutlineResources {
+    stencil_texture: CachedTexture,
+    vertical_blur_texture: CachedTexture,
+    horizontal_blur_texture: CachedTexture,
+    vertical_blur_bind_group: BindGroup,
+    horizontal_blur_bind_group: BindGroup,
+    combine_bind_group: BindGroup,
+}
+
+struct OutlinePipelines {
+    sampler: Sampler,
+    blur_bind_group_layout: BindGroupLayout,
+    combine_bind_group_layout: BindGroupLayout,
+    horizontal_blur_pipeline: CachedRenderPipelineId,
+    vertical_blur_pipeline: CachedRenderPipelineId,
+    combine_pipeline: CachedRenderPipelineId,
+}
+
+impl FromWorld for OutlinePipelines {
+    fn from_world(world: &mut World) -> Self {
+        let render_device = world.resource::<RenderDevice>();
+
+        let sampler = render_device.create_sampler(&SamplerDescriptor {
+            min_filter: FilterMode::Linear,
+            mag_filter: FilterMode::Linear,
+            address_mode_u: AddressMode::ClampToEdge,
+            address_mode_v: AddressMode::ClampToEdge,
+            ..Default::default()
+        });
+        let blur_bind_group_layout =
+            render_device.create_bind_group_layout(&BindGroupLayoutDescriptor {
+                label: Some("blur_bind_group_layout"),
+                entries: &[
+                    // stencil texture
+                    BindGroupLayoutEntry {
+                        binding: 0,
+                        ty: BindingType::Texture {
+                            sample_type: TextureSampleType::Float { filterable: true },
+                            view_dimension: TextureViewDimension::D2,
+                            multisampled: false,
+                        },
+                        visibility: ShaderStages::FRAGMENT,
+                        count: None,
+                    },
+                    // sampler
+                    BindGroupLayoutEntry {
+                        binding: 1,
+                        ty: BindingType::Sampler(SamplerBindingType::Filtering),
+                        visibility: ShaderStages::FRAGMENT,
+                        count: None,
+                    },
+                ],
+            });
+        let combine_bind_group_layout =
+            render_device.create_bind_group_layout(&BindGroupLayoutDescriptor {
+                label: Some("combine_bind_group_layout"),
+                entries: &[
+                    // sampler
+                    BindGroupLayoutEntry {
+                        binding: 0,
+                        ty: BindingType::Sampler(SamplerBindingType::Filtering),
+                        visibility: ShaderStages::FRAGMENT,
+                        count: None,
+                    },
+                    // stencil texture
+                    BindGroupLayoutEntry {
+                        binding: 1,
+                        ty: BindingType::Texture {
+                            sample_type: TextureSampleType::Float { filterable: true },
+                            view_dimension: TextureViewDimension::D2,
+                            multisampled: false,
+                        },
+                        visibility: ShaderStages::FRAGMENT,
+                        count: None,
+                    },
+                    // blur texture
+                    BindGroupLayoutEntry {
+                        binding: 2,
+                        ty: BindingType::Texture {
+                            sample_type: TextureSampleType::Float { filterable: true },
+                            view_dimension: TextureViewDimension::D2,
+                            multisampled: false,
+                        },
+                        visibility: ShaderStages::FRAGMENT,
+                        count: None,
+                    },
+                ],
+            });
+
+        let mut pipeline_cache = world.resource_mut::<PipelineCache>();
+
+        let blur_vertex_state = fullscreen_shader_vertex_state();
+
+        let vertical_blur_pipeline =
+            pipeline_cache.queue_render_pipeline(RenderPipelineDescriptor {
+                label: Some("vertical_blur_pipeline".into()),
+                layout: Some(vec![blur_bind_group_layout.clone()]),
+                vertex: blur_vertex_state.clone(),
+                fragment: Some(FragmentState {
+                    shader: BLUR_SHADER_HANDLE.typed::<Shader>(),
+                    shader_defs: vec![],
+                    entry_point: "vertical_blur".into(),
+                    targets: vec![Some(ColorTargetState {
+                        format: TextureFormat::bevy_default(),
+                        blend: None,
+                        write_mask: ColorWrites::ALL,
+                    })],
+                }),
+                primitive: PrimitiveState::default(),
+                depth_stencil: None,
+                multisample: MultisampleState::default(),
+            });
+
+        let horizontal_blur_pipeline =
+            pipeline_cache.queue_render_pipeline(RenderPipelineDescriptor {
+                label: Some("horizontal_blur_pipeline".into()),
+                layout: Some(vec![blur_bind_group_layout.clone()]),
+                vertex: blur_vertex_state,
+                fragment: Some(FragmentState {
+                    shader: BLUR_SHADER_HANDLE.typed::<Shader>(),
+                    shader_defs: vec![],
+                    entry_point: "horizontal_blur".into(),
+                    targets: vec![Some(ColorTargetState {
+                        format: TextureFormat::bevy_default(),
+                        blend: None,
+                        write_mask: ColorWrites::ALL,
+                    })],
+                }),
+                primitive: PrimitiveState::default(),
+                depth_stencil: None,
+                multisample: MultisampleState::default(),
+            });
+
+        let combine_pipeline = pipeline_cache.queue_render_pipeline(RenderPipelineDescriptor {
+            label: Some("combine_pipeline".into()),
+            layout: Some(vec![combine_bind_group_layout.clone()]),
+            vertex: fullscreen_shader_vertex_state(),
+            fragment: Some(FragmentState {
+                shader: COMBINE_SHADER_HANDLE.typed::<Shader>(),
+                shader_defs: vec![],
+                entry_point: "combine".into(),
+                targets: vec![Some(ColorTargetState {
+                    format: TextureFormat::bevy_default(),
+                    blend: Some(BlendState::ALPHA_BLENDING),
+                    write_mask: ColorWrites::ALL,
+                })],
+            }),
+            primitive: PrimitiveState::default(),
+            depth_stencil: None,
+            multisample: MultisampleState::default(),
+        });
+
+        Self {
+            sampler,
+            blur_bind_group_layout,
+            combine_bind_group_layout,
+            vertical_blur_pipeline,
+            horizontal_blur_pipeline,
+            combine_pipeline,
+        }
+    }
+}
+
+/// Make sure all 3d cameras have a [`MeshStencil`] [`RenderPhase`]
+fn extract_stencil_phase(mut commands: Commands, cameras: Extract<Query<Entity, With<Camera3d>>>) {
+    for entity in cameras.iter() {
+        commands
+            .get_or_spawn(entity)
+            .insert(RenderPhase::<MeshStencil>::default());
+    }
+}
+
+/// Prepares the textures and the bind groups used to render the outline
+fn prepare_outline_bind_groups(
+    mut commands: Commands,
+    render_device: Res<RenderDevice>,
+    pipelines: Res<OutlinePipelines>,
+    mut texture_cache: ResMut<TextureCache>,
+    cameras: Query<(Entity, &ExtractedCamera)>,
+) {
+    for (entity, camera) in &cameras {
+        let Some(UVec2 { x, y }) = camera.physical_viewport_size else {
+            continue;
+        };
+
+        // TODO make this configurable
+        let half_size = Extent3d {
+            width: (x / 2).max(1),
+            height: (y / 2).max(1),
+            depth_or_array_layers: 1,
+        };
+
+        let stencil_desc = TextureDescriptor {
+            label: Some("stencil_output"),
+            size: half_size,
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: TextureDimension::D2,
+            format: TextureFormat::bevy_default(),
+            usage: TextureUsages::RENDER_ATTACHMENT | TextureUsages::TEXTURE_BINDING,
+        };
+        let stencil_texture = texture_cache.get(&render_device, stencil_desc.clone());
+
+        let blur_desc = TextureDescriptor {
+            label: Some("blur_output"),
+            size: half_size,
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: TextureDimension::D2,
+            format: TextureFormat::bevy_default(),
+            usage: TextureUsages::RENDER_ATTACHMENT | TextureUsages::TEXTURE_BINDING,
+        };
+        let vertical_blur_texture = texture_cache.get(&render_device, blur_desc.clone());
+        let horizontal_blur_texture = texture_cache.get(&render_device, blur_desc.clone());
+
+        let vertical_blur_bind_group = render_device.create_bind_group(&BindGroupDescriptor {
+            label: Some("outline_vertical_blur_bind_group"),
+            layout: &pipelines.blur_bind_group_layout,
+            entries: &[
+                BindGroupEntry {
+                    binding: 0,
+                    resource: BindingResource::TextureView(&stencil_texture.default_view),
+                },
+                BindGroupEntry {
+                    binding: 1,
+                    resource: BindingResource::Sampler(&pipelines.sampler),
+                },
+            ],
+        });
+
+        let horizontal_blur_bind_group = render_device.create_bind_group(&BindGroupDescriptor {
+            label: Some("outline_horizontal_blur_bind_group"),
+            layout: &pipelines.blur_bind_group_layout,
+            entries: &[
+                BindGroupEntry {
+                    binding: 0,
+                    resource: BindingResource::TextureView(&vertical_blur_texture.default_view),
+                },
+                BindGroupEntry {
+                    binding: 1,
+                    resource: BindingResource::Sampler(&pipelines.sampler),
+                },
+            ],
+        });
+
+        let combine_bind_group = render_device.create_bind_group(&BindGroupDescriptor {
+            label: Some("outline_combine_bind_group"),
+            layout: &pipelines.combine_bind_group_layout,
+            entries: &[
+                BindGroupEntry {
+                    binding: 0,
+                    resource: BindingResource::Sampler(&pipelines.sampler),
+                },
+                BindGroupEntry {
+                    binding: 1,
+                    resource: BindingResource::TextureView(&stencil_texture.default_view),
+                },
+                BindGroupEntry {
+                    binding: 2,
+                    resource: BindingResource::TextureView(&horizontal_blur_texture.default_view),
+                },
+            ],
+        });
+
+        commands.entity(entity).insert(OutlineResources {
+            vertical_blur_bind_group,
+            horizontal_blur_bind_group,
+            combine_bind_group,
+            stencil_texture,
+            vertical_blur_texture,
+            horizontal_blur_texture,
+        });
+    }
+}
+
+/// Add any visible entity with a mesh and an [`Outline`] to the stencil_phase
+fn queue_mesh_stencil(
+    stencil_draw_functions: Res<DrawFunctions<MeshStencil>>,
+    stencil_pipeline: Res<StencilPipeline>,
+    mut pipelines: ResMut<SpecializedMeshPipelines<StencilPipeline>>,
+    mut pipeline_cache: ResMut<PipelineCache>,
+    render_meshes: Res<RenderAssets<Mesh>>,
+    outline_meshes: Query<(Entity, &Handle<Mesh>, &MeshUniform), With<Outline>>,
+    mut views: Query<(
+        &ExtractedView,
+        &mut VisibleEntities,
+        &mut RenderPhase<MeshStencil>,
+    )>,
+) {
+    let draw_outline = stencil_draw_functions
+        .read()
+        .get_id::<DrawMeshStencil>()
+        .unwrap();
+
+    for (view, visible_entities, mut stencil_phase) in views.iter_mut() {
+        let view_matrix = view.transform.compute_matrix();
+        let inv_view_row_2 = view_matrix.inverse().row(2);
+
+        for visible_entity in visible_entities.entities.iter().copied() {
+            let Ok((entity, mesh_handle, mesh_uniform)) = outline_meshes.get(visible_entity) else {
+                continue;
+            };
+            let Some(mesh) = render_meshes.get(mesh_handle) else {
+                continue;
+            };
+
+            let key = MeshPipelineKey::from_primitive_topology(mesh.primitive_topology);
+
+            let pipeline = pipelines
+                .specialize(&mut pipeline_cache, &stencil_pipeline, key, &mesh.layout)
+                .unwrap();
+
+            stencil_phase.add(MeshStencil {
+                entity,
+                pipeline,
+                draw_function: draw_outline,
+                distance: inv_view_row_2.dot(mesh_uniform.transform.col(3)),
+            });
         }
     }
 }
