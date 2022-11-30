@@ -21,19 +21,16 @@ use bevy::{
     utils::HashMap,
 };
 
-use crate::{
-    outline_node::{OutlinePipelines, BLUR_SHADER_HANDLE, COMBINE_SHADER_HANDLE},
-    plugin::Outline,
-};
+use crate::Outline;
 
 use super::{
-    DrawMeshStencil, MeshStencil, OutlineBindGroups, OutlineTextures, StencilPipeline,
-    STENCIL_SHADER_HANDLE,
+    DrawMeshStencil, MeshStencil, OutlineBindGroups, OutlinePipelines, OutlineTextures,
+    StencilPipeline, BLUR_SHADER_HANDLE, COMBINE_SHADER_HANDLE, STENCIL_SHADER_HANDLE,
 };
 
-/// This plugins sets up all the required systems and resources for the stencil phase
-pub struct StencilPassPlugin;
-impl Plugin for StencilPassPlugin {
+/// This plugin sets up all the required systems and resources for the stencil phase
+pub struct OutlineNodePlugin;
+impl Plugin for OutlineNodePlugin {
     fn build(&self, app: &mut App) {
         load_internal_asset!(
             app,

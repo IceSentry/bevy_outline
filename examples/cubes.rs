@@ -1,5 +1,5 @@
 use bevy::prelude::{shape::Cube, *};
-use bevy_outline::plugin::{BlurredOutlinePlugin, Outline};
+use bevy_outline::{BlurredOutlinePlugin, Outline};
 
 fn main() {
     App::new()
