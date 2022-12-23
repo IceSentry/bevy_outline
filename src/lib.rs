@@ -1,4 +1,3 @@
-mod fullscreen_vertex_shader;
 pub mod node;
 mod utils;
 
@@ -25,7 +24,7 @@ use bevy::{
         },
         render_resource::{
             AddressMode, BindGroup, BindGroupDescriptor, BindGroupLayout,
-            BindGroupLayoutDescriptor, BindingResource, BindingType, BlendState, BufferBindingType,
+            BindGroupLayoutDescriptor, BindingResource, BindingType, BufferBindingType,
             CachedRenderPipelineId, Extent3d, FilterMode, PipelineCache, RenderPipelineDescriptor,
             Sampler, SamplerBindingType, SamplerDescriptor, ShaderType, SpecializedMeshPipeline,
             SpecializedMeshPipelineError, SpecializedMeshPipelines, TextureDescriptor,
@@ -41,7 +40,7 @@ use bevy::{
 };
 use utils::{color_target, fragment_state, RenderPipelineDescriptorBuilder};
 
-use crate::{fullscreen_vertex_shader::FULLSCREEN_SHADER_HANDLE, node::OutlineNode};
+use crate::node::OutlineNode;
 
 const STENCIL_SHADER_HANDLE: HandleUntyped =
     HandleUntyped::weak_from_u64(Shader::TYPE_UUID, 15139276207022888006);
@@ -78,12 +77,6 @@ pub mod graph {
 pub struct BlurredOutlinePlugin;
 impl Plugin for BlurredOutlinePlugin {
     fn build(&self, app: &mut App) {
-        load_internal_asset!(
-            app,
-            FULLSCREEN_SHADER_HANDLE,
-            "fullscreen_vertex_shader/fullscreen.wgsl",
-            Shader::from_wgsl
-        );
         load_internal_asset!(
             app,
             STENCIL_SHADER_HANDLE,
@@ -133,9 +126,9 @@ impl Plugin for BlurredOutlinePlugin {
                 )
                 .unwrap();
 
-            // MAIN_PASS -> OUTLINE
+            // TONEMAPPING -> OUTLINE
             draw_3d_graph
-                .add_node_edge(core_3d::graph::node::MAIN_PASS, graph::node::OUTLINE_PASS)
+                .add_node_edge(core_3d::graph::node::TONEMAPPING, graph::node::OUTLINE_PASS)
                 .unwrap();
         }
     }
@@ -179,6 +172,7 @@ type DrawMeshStencil = (
     DrawMesh,
 );
 
+#[derive(Resource)]
 pub struct StencilPipeline {
     mesh_pipeline: MeshPipeline,
 }
@@ -215,7 +209,7 @@ impl SpecializedMeshPipeline for StencilPipeline {
     }
 }
 
-#[derive(Component, Clone, Copy, Debug)]
+#[derive(Component, Clone, Copy, Debug, Default)]
 pub struct OutlineSettings {
     pub size: f32,
 }
@@ -244,9 +238,9 @@ struct OutlineResources {
     horizontal_blur_texture: CachedTexture,
     vertical_blur_bind_group: BindGroup,
     horizontal_blur_bind_group: BindGroup,
-    combine_bind_group: BindGroup,
 }
 
+#[derive(Resource)]
 struct OutlinePipelines {
     sampler: Sampler,
     blur_bind_group_layout: BindGroupLayout,
@@ -298,6 +292,8 @@ impl FromWorld for OutlinePipelines {
                     1 => texture,
                     // blur texture
                     2 => texture,
+                    // screen texture
+                    3 => texture,
                 ],
             });
 
@@ -322,11 +318,7 @@ impl FromWorld for OutlinePipelines {
         let combine_pipeline = pipeline_cache.queue_render_pipeline(
             RenderPipelineDescriptorBuilder::default_fullscreen()
                 .label("combine_pipeline")
-                .fragment(
-                    COMBINE_SHADER_HANDLE,
-                    "combine",
-                    &[color_target(Some(BlendState::ALPHA_BLENDING))],
-                )
+                .fragment(COMBINE_SHADER_HANDLE, "combine", &[color_target(None)])
                 .layout(vec![combine_bind_group_layout.clone()])
                 .build(),
         );
@@ -348,16 +340,15 @@ fn extract_stencil_phase(
     cameras: Extract<Query<(Entity, &Camera, Option<&OutlineSettings>), With<Camera3d>>>,
 ) {
     for (entity, camera, settings) in cameras.iter() {
-        commands
-            .get_or_spawn(entity)
-            .insert(RenderPhase::<MeshStencil>::default());
+        let mut entity = commands.get_or_spawn(entity);
+        entity.insert(RenderPhase::<MeshStencil>::default());
 
         if let (Some((origin, _)), Some(size), Some(target_size)) = (
             camera.physical_viewport_rect(),
             camera.physical_viewport_size(),
             camera.physical_target_size(),
         ) {
-            commands.entity(entity).insert(BlurUniform {
+            entity.insert(BlurUniform {
                 size: settings.map(|s| s.size).unwrap_or(8.0),
                 dims: Vec2::ONE / size.as_vec2(),
                 viewport: UVec4::new(origin.x, origin.y, size.x, size.y).as_vec4()
@@ -437,20 +428,9 @@ fn prepare_outline_resources(
             ],
         });
 
-        let combine_bind_group = render_device.create_bind_group(&BindGroupDescriptor {
-            label: Some("outline_combine_bind_group"),
-            layout: &pipelines.combine_bind_group_layout,
-            entries: &bind_group_entries![
-                0 => BindingResource::Sampler(&pipelines.sampler),
-                1 => BindingResource::TextureView(&stencil_texture.default_view),
-                2 => BindingResource::TextureView(&horizontal_blur_texture.default_view),
-            ],
-        });
-
         commands.entity(entity).insert(OutlineResources {
             vertical_blur_bind_group,
             horizontal_blur_bind_group,
-            combine_bind_group,
             stencil_texture,
             vertical_blur_texture,
             horizontal_blur_texture,

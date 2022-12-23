@@ -3,7 +3,10 @@ use bevy_outline::{BlurredOutlinePlugin, Outline, OutlineSettings};
 
 fn main() {
     App::new()
-        .add_plugins(DefaultPlugins)
+        .add_plugins(DefaultPlugins.set(AssetPlugin {
+            watch_for_changes: true,
+            ..default()
+        }))
         .add_plugin(BlurredOutlinePlugin)
         .add_startup_system(setup)
         .add_system(rotate)
@@ -16,7 +19,7 @@ fn setup(
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
 ) {
-    commands.spawn_bundle(PointLightBundle {
+    commands.spawn(PointLightBundle {
         point_light: PointLight {
             intensity: 1500.0,
             shadows_enabled: true,
@@ -25,30 +28,32 @@ fn setup(
         transform: Transform::from_xyz(4.0, 8.0, 4.0),
         ..default()
     });
-    commands
-        .spawn_bundle(Camera3dBundle {
+    commands.spawn((
+        Camera3dBundle {
             transform: Transform::from_xyz(-2.0, 2.5, 5.0).looking_at(Vec3::ZERO, Vec3::Y),
             ..default()
-        })
-        .insert(OutlineSettings { size: 4.0 });
+        },
+        OutlineSettings { size: 1.0 },
+    ));
 
-    commands.spawn_bundle(PbrBundle {
+    commands.spawn(PbrBundle {
         mesh: meshes.add(Cube { size: 1.0 }.into()),
         material: materials.add(Color::RED.into()),
         transform: Transform::from_xyz(-1.15, 0.0, 0.0),
         ..Default::default()
     });
 
-    commands
-        .spawn_bundle(PbrBundle {
+    commands.spawn((
+        PbrBundle {
             mesh: meshes.add(Cube { size: 1.0 }.into()),
             material: materials.add(Color::RED.into()),
             ..Default::default()
-        })
-        .insert(RotationAxis(Vec3::X))
-        .insert(Outline);
+        },
+        RotationAxis(Vec3::X),
+        Outline,
+    ));
 
-    commands.spawn_bundle(PbrBundle {
+    commands.spawn(PbrBundle {
         mesh: meshes.add(Cube { size: 1.0 }.into()),
         material: materials.add(Color::RED.into()),
         transform: Transform::from_xyz(1.15, 0.0, 0.0),
@@ -69,6 +74,6 @@ fn rotate(time: Res<Time>, mut query: Query<(&mut Transform, &RotationAxis), Wit
 
 fn update_outline(mut q: Query<&mut OutlineSettings>, time: Res<Time>) {
     for mut settings in &mut q {
-        settings.size = (time.seconds_since_startup().sin() as f32 * 0.5 + 0.5) * 24.0;
+        settings.size = (time.elapsed_seconds_wrapped().sin() * 0.5 + 0.5) * 32.0;
     }
 }

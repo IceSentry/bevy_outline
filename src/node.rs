@@ -5,14 +5,15 @@ use bevy::{
         render_graph::{Node, RenderGraphContext, SlotInfo, SlotType},
         render_phase::{DrawFunctions, PhaseItem, RenderPhase, TrackedRenderPass},
         render_resource::{
-            LoadOp, Operations, PipelineCache, RenderPassColorAttachment, RenderPassDescriptor,
+            BindGroupDescriptor, BindingResource, LoadOp, Operations, PipelineCache,
+            RenderPassColorAttachment, RenderPassDescriptor,
         },
-        renderer::RenderContext,
+        renderer::{RenderContext, RenderDevice},
         view::ViewTarget,
     },
 };
 
-use crate::{BlurUniform, MeshStencil, OutlineResources};
+use crate::{bind_group_entries, BlurUniform, MeshStencil, OutlineResources};
 
 use super::OutlinePipelines;
 
@@ -58,6 +59,7 @@ impl Node for OutlineNode {
 
         let pipelines = world.resource::<OutlinePipelines>();
         let pipeline_cache = world.resource::<PipelineCache>();
+        let render_device = world.resource::<RenderDevice>();
 
         let (Some(vertical_blur_pipeline), Some(horizontal_blur_pipeline), Some(combine_pipeline)) = (
             pipeline_cache.get_render_pipeline(pipelines.vertical_blur_pipeline),
@@ -66,6 +68,8 @@ impl Node for OutlineNode {
         ) else {
             return Ok(());
         };
+
+        let post_process = view_target.post_process_write();
 
         // General algorithm:
         // Generate a stencil buffer of all the meshes with an outline component
@@ -159,24 +163,46 @@ impl Node for OutlineNode {
 
         // final combine pass
         {
-            let mut combine_pass =
-                TrackedRenderPass::new(render_context.command_encoder.begin_render_pass(
-                    &RenderPassDescriptor {
-                        label: Some("outline_combine_pass"),
-                        color_attachments: &[Some(RenderPassColorAttachment {
-                            view: &view_target.view,
-                            resolve_target: None,
-                            ops: Operations {
-                                load: LoadOp::Load,
-                                store: true,
-                            },
-                        })],
-                        depth_stencil_attachment: None,
-                    },
-                ));
+            let combine_bind_group = render_device.create_bind_group(&BindGroupDescriptor {
+                label: Some("outline_combine_bind_group"),
+                layout: &pipelines.combine_bind_group_layout,
+                entries: &bind_group_entries![
+                    0 => BindingResource::Sampler(&pipelines.sampler),
+                    1 => BindingResource::TextureView(&resources.stencil_texture.default_view),
+                    2 => BindingResource::TextureView(&resources.horizontal_blur_texture.default_view),
+                    3 => BindingResource::TextureView(post_process.source),
+                ],
+            });
 
-            combine_pass.set_render_pipeline(combine_pipeline);
-            combine_pass.set_bind_group(0, &resources.combine_bind_group, &[]);
+            let pass_descriptor = RenderPassDescriptor {
+                label: Some("outline_combine_pass"),
+                color_attachments: &[Some(RenderPassColorAttachment {
+                    view: post_process.destination,
+                    resolve_target: None,
+                    ops: Operations::default(),
+                })],
+                depth_stencil_attachment: None,
+            };
+
+            // let pass_descriptor = RenderPassDescriptor {
+            //     label: Some("outline_combine_pass"),
+            //     color_attachments: &[Some(RenderPassColorAttachment {
+            //         view: post_process.destination,
+            //         resolve_target: None,
+            //         ops: Operations {
+            //             load: LoadOp::Load,
+            //             store: true,
+            //         },
+            //     })],
+            //     depth_stencil_attachment: None,
+            // };
+
+            let mut combine_pass = render_context
+                .command_encoder
+                .begin_render_pass(&pass_descriptor);
+
+            combine_pass.set_pipeline(combine_pipeline);
+            combine_pass.set_bind_group(0, &combine_bind_group, &[]);
             combine_pass.draw(0..3, 0..1);
         }
 

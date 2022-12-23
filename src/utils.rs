@@ -1,4 +1,5 @@
 use bevy::{
+    core_pipeline::fullscreen_vertex_shader::fullscreen_shader_vertex_state,
     prelude::*,
     render::{
         render_resource::{
@@ -8,8 +9,6 @@ use bevy::{
         texture::BevyDefault,
     },
 };
-
-use crate::fullscreen_vertex_shader::fullscreen_shader_vertex_state;
 
 pub fn color_target(blend: Option<BlendState>) -> ColorTargetState {
     ColorTargetState {
