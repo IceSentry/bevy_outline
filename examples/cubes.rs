@@ -36,12 +36,16 @@ fn setup(
         OutlineSettings { size: 1.0 },
     ));
 
-    commands.spawn(PbrBundle {
-        mesh: meshes.add(Cube { size: 1.0 }.into()),
-        material: materials.add(Color::RED.into()),
-        transform: Transform::from_xyz(-1.15, 0.0, 0.0),
-        ..Default::default()
-    });
+    commands.spawn((
+        PbrBundle {
+            mesh: meshes.add(Cube { size: 1.0 }.into()),
+            material: materials.add(Color::RED.into()),
+            transform: Transform::from_xyz(-1.25, 0.0, 0.5),
+            ..Default::default()
+        },
+        RotationAxis(Vec3::Y),
+        Outline,
+    ));
 
     commands.spawn((
         PbrBundle {
@@ -64,7 +68,7 @@ fn setup(
 #[derive(Clone, Debug, Component)]
 struct RotationAxis(Vec3);
 
-fn rotate(time: Res<Time>, mut query: Query<(&mut Transform, &RotationAxis), With<Outline>>) {
+fn rotate(time: Res<Time>, mut query: Query<(&mut Transform, &RotationAxis)>) {
     let delta = time.delta_seconds();
 
     for (mut xform, rot) in query.iter_mut() {

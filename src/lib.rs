@@ -1,3 +1,5 @@
+#![allow(clippy::type_complexity)]
+
 pub mod node;
 mod utils;
 
@@ -24,12 +26,12 @@ use bevy::{
         },
         render_resource::{
             AddressMode, BindGroup, BindGroupDescriptor, BindGroupLayout,
-            BindGroupLayoutDescriptor, BindingResource, BindingType, BufferBindingType,
-            CachedRenderPipelineId, Extent3d, FilterMode, PipelineCache, RenderPipelineDescriptor,
-            Sampler, SamplerBindingType, SamplerDescriptor, ShaderType, SpecializedMeshPipeline,
-            SpecializedMeshPipelineError, SpecializedMeshPipelines, TextureDescriptor,
-            TextureDimension, TextureFormat, TextureSampleType, TextureUsages,
-            TextureViewDimension,
+            BindGroupLayoutDescriptor, BindingResource, BindingType, BlendComponent, BlendFactor,
+            BlendOperation, BlendState, BufferBindingType, CachedRenderPipelineId, Extent3d,
+            FilterMode, PipelineCache, RenderPipelineDescriptor, Sampler, SamplerBindingType,
+            SamplerDescriptor, ShaderType, SpecializedMeshPipeline, SpecializedMeshPipelineError,
+            SpecializedMeshPipelines, TextureDescriptor, TextureDimension, TextureFormat,
+            TextureSampleType, TextureUsages, TextureViewDimension,
         },
         renderer::RenderDevice,
         texture::{BevyDefault, CachedTexture, TextureCache},
@@ -126,9 +128,8 @@ impl Plugin for BlurredOutlinePlugin {
                 )
                 .unwrap();
 
-            // TONEMAPPING -> OUTLINE
             draw_3d_graph
-                .add_node_edge(core_3d::graph::node::TONEMAPPING, graph::node::OUTLINE_PASS)
+                .add_node_edge(core_3d::graph::node::MAIN_PASS, graph::node::OUTLINE_PASS)
                 .unwrap();
         }
     }
@@ -238,6 +239,7 @@ struct OutlineResources {
     horizontal_blur_texture: CachedTexture,
     vertical_blur_bind_group: BindGroup,
     horizontal_blur_bind_group: BindGroup,
+    combine_bind_group: BindGroup,
 }
 
 #[derive(Resource)]
@@ -292,8 +294,6 @@ impl FromWorld for OutlinePipelines {
                     1 => texture,
                     // blur texture
                     2 => texture,
-                    // screen texture
-                    3 => texture,
                 ],
             });
 
@@ -318,7 +318,18 @@ impl FromWorld for OutlinePipelines {
         let combine_pipeline = pipeline_cache.queue_render_pipeline(
             RenderPipelineDescriptorBuilder::default_fullscreen()
                 .label("combine_pipeline")
-                .fragment(COMBINE_SHADER_HANDLE, "combine", &[color_target(None)])
+                .fragment(
+                    COMBINE_SHADER_HANDLE,
+                    "combine",
+                    &[color_target(Some(BlendState {
+                        color: BlendComponent {
+                            src_factor: BlendFactor::One,
+                            dst_factor: BlendFactor::One,
+                            operation: BlendOperation::Add,
+                        },
+                        alpha: BlendComponent::REPLACE,
+                    }))],
+                )
                 .layout(vec![combine_bind_group_layout.clone()])
                 .build(),
         );
@@ -375,8 +386,8 @@ fn prepare_outline_resources(
 
         // TODO make this configurable
         let size = Extent3d {
-            width: (x / 1).max(1),
-            height: (y / 1).max(1),
+            width: x,  // (x / 2).max(1),
+            height: y, // (y / 2).max(1),
             depth_or_array_layers: 1,
         };
 
@@ -428,9 +439,20 @@ fn prepare_outline_resources(
             ],
         });
 
+        let combine_bind_group = render_device.create_bind_group(&BindGroupDescriptor {
+            label: Some("outline_combine_bind_group"),
+            layout: &pipelines.combine_bind_group_layout,
+            entries: &bind_group_entries![
+                0 => BindingResource::Sampler(&pipelines.sampler),
+                1 => BindingResource::TextureView(&stencil_texture.default_view),
+                2 => BindingResource::TextureView(&horizontal_blur_texture.default_view),
+            ],
+        });
+
         commands.entity(entity).insert(OutlineResources {
             vertical_blur_bind_group,
             horizontal_blur_bind_group,
+            combine_bind_group,
             stencil_texture,
             vertical_blur_texture,
             horizontal_blur_texture,
