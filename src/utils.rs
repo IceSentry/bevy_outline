@@ -64,7 +64,7 @@ pub struct RenderPipelineDescriptorBuilder {
 
 impl RenderPipelineDescriptorBuilder {
     #[allow(unused)]
-    pub fn new(vertex_state: VertexState) -> RenderPipelineDescriptorBuilder {
+    pub fn default(vertex_state: VertexState) -> RenderPipelineDescriptorBuilder {
         Self {
             desc: RenderPipelineDescriptor {
                 fragment: None,
@@ -78,7 +78,7 @@ impl RenderPipelineDescriptorBuilder {
         }
     }
 
-    pub fn new_fullscreen() -> RenderPipelineDescriptorBuilder {
+    pub fn default_fullscreen() -> RenderPipelineDescriptorBuilder {
         Self {
             desc: RenderPipelineDescriptor {
                 fragment: None,

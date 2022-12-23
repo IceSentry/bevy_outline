@@ -45,7 +45,7 @@ var stencil_sampler: sampler;
 //     0.012318109844189502
 // );
 
-let KERNEL_SIZE: f32 = 10.0;
+let KERNEL_SIZE: f32 = 16.0;
 
 @fragment
 fn vertical_blur(@location(0) uv: vec2<f32>) -> @location(0) vec4<f32> {

@@ -273,7 +273,7 @@ impl FromWorld for OutlinePipelines {
         let mut pipeline_cache = world.resource_mut::<PipelineCache>();
 
         let vertical_blur_pipeline = pipeline_cache.queue_render_pipeline(
-            RenderPipelineDescriptorBuilder::new_fullscreen()
+            RenderPipelineDescriptorBuilder::default_fullscreen()
                 .label("vertical_blur_pipeline")
                 .fragment(BLUR_SHADER_HANDLE, "vertical_blur", &[color_target(None)])
                 .layout(vec![blur_bind_group_layout.clone()])
@@ -281,7 +281,7 @@ impl FromWorld for OutlinePipelines {
         );
 
         let horizontal_blur_pipeline = pipeline_cache.queue_render_pipeline(
-            RenderPipelineDescriptorBuilder::new_fullscreen()
+            RenderPipelineDescriptorBuilder::default_fullscreen()
                 .label("horizontal_blur_pipeline")
                 .fragment(BLUR_SHADER_HANDLE, "horizontal_blur", &[color_target(None)])
                 .layout(vec![blur_bind_group_layout.clone()])
@@ -289,7 +289,7 @@ impl FromWorld for OutlinePipelines {
         );
 
         let combine_pipeline = pipeline_cache.queue_render_pipeline(
-            RenderPipelineDescriptorBuilder::new_fullscreen()
+            RenderPipelineDescriptorBuilder::default_fullscreen()
                 .label("combine_pipeline")
                 .fragment(
                     COMBINE_SHADER_HANDLE,
@@ -335,8 +335,8 @@ fn prepare_outline_resources(
 
         // TODO make this configurable
         let size = Extent3d {
-            width: (x / 2).max(1),
-            height: (y / 2).max(1),
+            width: (x / 1).max(1),
+            height: (y / 1).max(1),
             depth_or_array_layers: 1,
         };
 
