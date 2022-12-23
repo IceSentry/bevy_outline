@@ -13,7 +13,9 @@ use bevy::{
     reflect::TypeUuid,
     render::{
         camera::ExtractedCamera,
-        extract_component::{ExtractComponent, ExtractComponentPlugin},
+        extract_component::{
+            ComponentUniforms, ExtractComponent, ExtractComponentPlugin, UniformComponentPlugin,
+        },
         mesh::InnerMeshVertexBufferLayout,
         render_asset::RenderAssets,
         render_graph::RenderGraph,
@@ -23,9 +25,9 @@ use bevy::{
         },
         render_resource::{
             AddressMode, BindGroup, BindGroupDescriptor, BindGroupLayout,
-            BindGroupLayoutDescriptor, BindingResource, BindingType, BlendState,
+            BindGroupLayoutDescriptor, BindingResource, BindingType, BlendState, BufferBindingType,
             CachedRenderPipelineId, Extent3d, FilterMode, PipelineCache, RenderPipelineDescriptor,
-            Sampler, SamplerBindingType, SamplerDescriptor, SpecializedMeshPipeline,
+            Sampler, SamplerBindingType, SamplerDescriptor, ShaderType, SpecializedMeshPipeline,
             SpecializedMeshPipelineError, SpecializedMeshPipelines, TextureDescriptor,
             TextureDimension, TextureFormat, TextureSampleType, TextureUsages,
             TextureViewDimension,
@@ -96,7 +98,9 @@ impl Plugin for BlurredOutlinePlugin {
             Shader::from_wgsl
         );
 
-        app.add_plugin(ExtractComponentPlugin::<Outline>::default());
+        app.add_plugin(ExtractComponentPlugin::<Outline>::default())
+            .add_plugin(ExtractComponentPlugin::<OutlineSettings>::default())
+            .add_plugin(UniformComponentPlugin::<BlurUniform>::default());
 
         let Ok(render_app) = app.get_sub_app_mut(RenderApp) else {
             return;
@@ -211,6 +215,28 @@ impl SpecializedMeshPipeline for StencilPipeline {
     }
 }
 
+#[derive(Component, Clone, Copy, Debug)]
+pub struct OutlineSettings {
+    pub size: f32,
+}
+
+impl ExtractComponent for OutlineSettings {
+    type Query = &'static Self;
+
+    type Filter = ();
+
+    fn extract_component(item: bevy::ecs::query::QueryItem<Self::Query>) -> Self {
+        *item
+    }
+}
+
+#[derive(Component, ShaderType, Clone)]
+struct BlurUniform {
+    size: f32,
+    dims: Vec2,
+    viewport: Vec4,
+}
+
 #[derive(Component)]
 struct OutlineResources {
     stencil_texture: CachedTexture,
@@ -255,6 +281,11 @@ impl FromWorld for OutlinePipelines {
                     0 => texture,
                     // sampler
                     1 => BindingType::Sampler(SamplerBindingType::Filtering),
+                    2 => BindingType::Buffer {
+                        ty: BufferBindingType::Uniform,
+                        has_dynamic_offset: true,
+                        min_binding_size: Some(BlurUniform::min_size()),
+                    },
                 ],
             });
         let combine_bind_group_layout =
@@ -312,11 +343,28 @@ impl FromWorld for OutlinePipelines {
 }
 
 /// Make sure all 3d cameras have a [`MeshStencil`] [`RenderPhase`]
-fn extract_stencil_phase(mut commands: Commands, cameras: Extract<Query<Entity, With<Camera3d>>>) {
-    for entity in cameras.iter() {
+fn extract_stencil_phase(
+    mut commands: Commands,
+    cameras: Extract<Query<(Entity, &Camera, Option<&OutlineSettings>), With<Camera3d>>>,
+) {
+    for (entity, camera, settings) in cameras.iter() {
         commands
             .get_or_spawn(entity)
             .insert(RenderPhase::<MeshStencil>::default());
+
+        if let (Some((origin, _)), Some(size), Some(target_size)) = (
+            camera.physical_viewport_rect(),
+            camera.physical_viewport_size(),
+            camera.physical_target_size(),
+        ) {
+            commands.entity(entity).insert(BlurUniform {
+                size: settings.map(|s| s.size).unwrap_or(8.0),
+                dims: Vec2::ONE / size.as_vec2(),
+                viewport: UVec4::new(origin.x, origin.y, size.x, size.y).as_vec4()
+                    / UVec4::new(target_size.x, target_size.y, target_size.x, target_size.y)
+                        .as_vec4(),
+            });
+        }
     }
 }
 
@@ -327,6 +375,7 @@ fn prepare_outline_resources(
     pipelines: Res<OutlinePipelines>,
     mut texture_cache: ResMut<TextureCache>,
     cameras: Query<(Entity, &ExtractedCamera)>,
+    uniforms: Res<ComponentUniforms<BlurUniform>>,
 ) {
     for (entity, camera) in &cameras {
         let Some(UVec2 { x, y }) = camera.physical_viewport_size else {
@@ -364,6 +413,9 @@ fn prepare_outline_resources(
         };
         let vertical_blur_texture = texture_cache.get(&render_device, blur_desc.clone());
         let horizontal_blur_texture = texture_cache.get(&render_device, blur_desc.clone());
+        let Some(uniform) = uniforms.binding() else {
+            return;
+        };
 
         let vertical_blur_bind_group = render_device.create_bind_group(&BindGroupDescriptor {
             label: Some("outline_vertical_blur_bind_group"),
@@ -371,6 +423,7 @@ fn prepare_outline_resources(
             entries: &bind_group_entries![
                 0 => BindingResource::TextureView(&stencil_texture.default_view),
                 1 => BindingResource::Sampler(&pipelines.sampler),
+                2 => uniform.clone(),
             ],
         });
 
@@ -380,6 +433,7 @@ fn prepare_outline_resources(
             entries: &bind_group_entries![
                 0 => BindingResource::TextureView(&vertical_blur_texture.default_view),
                 1 => BindingResource::Sampler(&pipelines.sampler),
+                2 => uniform.clone(),
             ],
         });
 
