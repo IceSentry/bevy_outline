@@ -12,7 +12,7 @@ use bevy::{
     },
 };
 
-use crate::{BlurUniform, MeshStencil, OutlineResources};
+use crate::{stencil_phase::MeshStencil, BlurUniform, OutlineResources};
 
 use super::OutlinePipelines;
 
@@ -68,32 +68,32 @@ impl Node for OutlineNode {
         };
 
         // General algorithm:
-        // Generate a stencil buffer of all the meshes with an outline component
-        // Vertical blur on the stencil buffer
-        // Horizontal blur on the vertical blur buffer
-        // Combine the final texture with the view_targer
+        // 1. Generate a stencil buffer of all the meshes with an outline component
+        // 2. Vertical blur on the stencil buffer
+        // 3. Horizontal blur on the vertical blur buffer
+        // 4. Combine the final texture with the view_target
 
-        // Draw a stencil of all the entities with outlines
+        // Draw stencil of all the entities with outlines
         {
-            let mut stencil_pass =
-                TrackedRenderPass::new(render_context.command_encoder.begin_render_pass(
-                    &RenderPassDescriptor {
-                        label: Some("outline_stencil_pass"),
-                        color_attachments: &[Some(RenderPassColorAttachment {
-                            view: &resources.stencil_texture.default_view,
-                            resolve_target: None,
-                            ops: Operations {
-                                load: LoadOp::Clear(Color::NONE.into()),
-                                store: true,
-                            },
-                        })],
-                        depth_stencil_attachment: None,
+            let pass_desc = RenderPassDescriptor {
+                label: Some("outline_stencil_pass"),
+                color_attachments: &[Some(RenderPassColorAttachment {
+                    view: &resources.stencil_texture.default_view,
+                    resolve_target: None,
+                    ops: Operations {
+                        load: LoadOp::Clear(Color::NONE.into()),
+                        store: true,
                     },
-                ));
+                })],
+                depth_stencil_attachment: None,
+            };
+            let mut stencil_pass = TrackedRenderPass::new(
+                render_context.command_encoder.begin_render_pass(&pass_desc),
+            );
 
             let draw_functions = world.resource::<DrawFunctions<MeshStencil>>();
             let mut draw_functions = draw_functions.write();
-            for item in stencil_phase.items.iter() {
+            for item in &stencil_phase.items {
                 draw_functions.get_mut(item.draw_function()).unwrap().draw(
                     world,
                     &mut stencil_pass,
@@ -105,21 +105,21 @@ impl Node for OutlineNode {
 
         // vertical blur
         {
-            let mut vertical_blur_pass =
-                TrackedRenderPass::new(render_context.command_encoder.begin_render_pass(
-                    &RenderPassDescriptor {
-                        label: Some("outline_vertical_blur_pass"),
-                        color_attachments: &[Some(RenderPassColorAttachment {
-                            view: &resources.vertical_blur_texture.default_view,
-                            resolve_target: None,
-                            ops: Operations {
-                                load: LoadOp::Clear(Color::NONE.into()),
-                                store: true,
-                            },
-                        })],
-                        depth_stencil_attachment: None,
+            let pass_desc = RenderPassDescriptor {
+                label: Some("outline_vertical_blur_pass"),
+                color_attachments: &[Some(RenderPassColorAttachment {
+                    view: &resources.vertical_blur_texture.default_view,
+                    resolve_target: None,
+                    ops: Operations {
+                        load: LoadOp::Clear(Color::NONE.into()),
+                        store: true,
                     },
-                ));
+                })],
+                depth_stencil_attachment: None,
+            };
+            let mut vertical_blur_pass = TrackedRenderPass::new(
+                render_context.command_encoder.begin_render_pass(&pass_desc),
+            );
 
             vertical_blur_pass.set_render_pipeline(vertical_blur_pipeline);
             vertical_blur_pass.set_bind_group(
@@ -132,34 +132,34 @@ impl Node for OutlineNode {
 
         // horizontal blur
         {
-            let mut vertical_blur_pass =
-                TrackedRenderPass::new(render_context.command_encoder.begin_render_pass(
-                    &RenderPassDescriptor {
-                        label: Some("outline_horizontal_blur_pass"),
-                        color_attachments: &[Some(RenderPassColorAttachment {
-                            view: &resources.horizontal_blur_texture.default_view,
-                            resolve_target: None,
-                            ops: Operations {
-                                load: LoadOp::Clear(Color::NONE.into()),
-                                store: true,
-                            },
-                        })],
-                        depth_stencil_attachment: None,
+            let pass_desc = RenderPassDescriptor {
+                label: Some("outline_horizontal_blur_pass"),
+                color_attachments: &[Some(RenderPassColorAttachment {
+                    view: &resources.horizontal_blur_texture.default_view,
+                    resolve_target: None,
+                    ops: Operations {
+                        load: LoadOp::Clear(Color::NONE.into()),
+                        store: true,
                     },
-                ));
+                })],
+                depth_stencil_attachment: None,
+            };
+            let mut horizontal_blur_pass = TrackedRenderPass::new(
+                render_context.command_encoder.begin_render_pass(&pass_desc),
+            );
 
-            vertical_blur_pass.set_render_pipeline(horizontal_blur_pipeline);
-            vertical_blur_pass.set_bind_group(
+            horizontal_blur_pass.set_render_pipeline(horizontal_blur_pipeline);
+            horizontal_blur_pass.set_bind_group(
                 0,
                 &resources.horizontal_blur_bind_group,
                 &[uniform_index.index()],
             );
-            vertical_blur_pass.draw(0..3, 0..1);
+            horizontal_blur_pass.draw(0..3, 0..1);
         }
 
         // final combine pass
         {
-            let pass_descriptor = RenderPassDescriptor {
+            let pass_desc = RenderPassDescriptor {
                 label: Some("outline_combine_pass"),
                 color_attachments: &[Some(view_target.get_unsampled_color_attachment(
                     Operations {
@@ -169,12 +169,11 @@ impl Node for OutlineNode {
                 ))],
                 depth_stencil_attachment: None,
             };
+            let mut combine_pass = TrackedRenderPass::new(
+                render_context.command_encoder.begin_render_pass(&pass_desc),
+            );
 
-            let mut combine_pass = render_context
-                .command_encoder
-                .begin_render_pass(&pass_descriptor);
-
-            combine_pass.set_pipeline(combine_pipeline);
+            combine_pass.set_render_pipeline(combine_pipeline);
             combine_pass.set_bind_group(0, &resources.combine_bind_group, &[]);
             combine_pass.draw(0..3, 0..1);
         }

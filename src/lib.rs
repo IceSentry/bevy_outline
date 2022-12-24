@@ -1,15 +1,13 @@
 #![allow(clippy::type_complexity)]
+#![allow(clippy::too_many_arguments)]
 
 pub mod node;
+mod stencil_phase;
 mod utils;
 
 use bevy::{
     asset::load_internal_asset,
     core_pipeline::core_3d,
-    pbr::{
-        DrawMesh, MeshPipeline, MeshPipelineKey, MeshUniform, SetMeshBindGroup,
-        SetMeshViewBindGroup,
-    },
     prelude::*,
     reflect::TypeUuid,
     render::{
@@ -17,35 +15,24 @@ use bevy::{
         extract_component::{
             ComponentUniforms, ExtractComponent, ExtractComponentPlugin, UniformComponentPlugin,
         },
-        mesh::InnerMeshVertexBufferLayout,
-        render_asset::RenderAssets,
         render_graph::RenderGraph,
-        render_phase::{
-            sort_phase_system, AddRenderCommand, CachedRenderPipelinePhaseItem, DrawFunctionId,
-            DrawFunctions, EntityPhaseItem, PhaseItem, RenderPhase, SetItemPipeline,
-        },
+        render_phase::{sort_phase_system, AddRenderCommand, DrawFunctions},
         render_resource::{
             AddressMode, BindGroup, BindGroupDescriptor, BindGroupLayout,
             BindGroupLayoutDescriptor, BindingResource, BindingType, BlendComponent, BlendFactor,
             BlendOperation, BlendState, BufferBindingType, CachedRenderPipelineId, Extent3d,
-            FilterMode, PipelineCache, RenderPipelineDescriptor, Sampler, SamplerBindingType,
-            SamplerDescriptor, ShaderType, SpecializedMeshPipeline, SpecializedMeshPipelineError,
+            FilterMode, PipelineCache, Sampler, SamplerBindingType, SamplerDescriptor, ShaderType,
             SpecializedMeshPipelines, TextureDescriptor, TextureDimension, TextureFormat,
             TextureSampleType, TextureUsages, TextureViewDimension,
         },
         renderer::RenderDevice,
         texture::{BevyDefault, CachedTexture, TextureCache},
-        view::{ExtractedView, VisibleEntities},
         Extract, RenderApp, RenderStage,
     },
-    utils::{FixedState, FloatOrd, Hashed},
 };
-use utils::{color_target, fragment_state, RenderPipelineDescriptorBuilder};
+use utils::{color_target, RenderPipelineDescriptorBuilder};
 
-use crate::node::OutlineNode;
-
-const STENCIL_SHADER_HANDLE: HandleUntyped =
-    HandleUntyped::weak_from_u64(Shader::TYPE_UUID, 15139276207022888006);
+use crate::{node::OutlineNode, stencil_phase::MeshStencilPlugin};
 
 const BLUR_SHADER_HANDLE: HandleUntyped =
     HandleUntyped::weak_from_u64(Shader::TYPE_UUID, 14687827633551304793);
@@ -53,8 +40,10 @@ const BLUR_SHADER_HANDLE: HandleUntyped =
 const COMBINE_SHADER_HANDLE: HandleUntyped =
     HandleUntyped::weak_from_u64(Shader::TYPE_UUID, 13593741836324854485);
 
-#[derive(Component, Clone, Copy)]
-pub struct Outline;
+#[derive(Component, Clone, Copy, Default)]
+pub struct Outline {
+    pub color: Color,
+}
 
 impl ExtractComponent for Outline {
     type Query = &'static Self;
@@ -79,12 +68,6 @@ pub mod graph {
 pub struct BlurredOutlinePlugin;
 impl Plugin for BlurredOutlinePlugin {
     fn build(&self, app: &mut App) {
-        load_internal_asset!(
-            app,
-            STENCIL_SHADER_HANDLE,
-            "stencil.wgsl",
-            Shader::from_wgsl
-        );
         load_internal_asset!(app, BLUR_SHADER_HANDLE, "blur.wgsl", Shader::from_wgsl);
         load_internal_asset!(
             app,
@@ -95,7 +78,8 @@ impl Plugin for BlurredOutlinePlugin {
 
         app.add_plugin(ExtractComponentPlugin::<Outline>::default())
             .add_plugin(ExtractComponentPlugin::<OutlineSettings>::default())
-            .add_plugin(UniformComponentPlugin::<BlurUniform>::default());
+            .add_plugin(UniformComponentPlugin::<BlurUniform>::default())
+            .add_plugin(MeshStencilPlugin);
 
         let Ok(render_app) = app.get_sub_app_mut(RenderApp) else {
             return;
@@ -103,21 +87,15 @@ impl Plugin for BlurredOutlinePlugin {
 
         render_app
             .init_resource::<OutlinePipelines>()
-            .init_resource::<StencilPipeline>()
-            .init_resource::<SpecializedMeshPipelines<StencilPipeline>>()
-            .init_resource::<DrawFunctions<MeshStencil>>()
-            .add_render_command::<MeshStencil, DrawMeshStencil>()
-            .add_system_to_stage(RenderStage::PhaseSort, sort_phase_system::<MeshStencil>)
-            .add_system_to_stage(RenderStage::Extract, extract_stencil_phase)
-            .add_system_to_stage(RenderStage::Prepare, prepare_outline_resources)
-            .add_system_to_stage(RenderStage::Queue, queue_mesh_stencil);
+            .add_system_to_stage(RenderStage::Extract, extract_blur_uniform)
+            .add_system_to_stage(RenderStage::Prepare, prepare_outline_resources);
 
         {
-            let stencil_node = OutlineNode::new(&mut render_app.world);
+            let outline_node = OutlineNode::new(&mut render_app.world);
             let mut graph = render_app.world.resource_mut::<RenderGraph>();
             let draw_3d_graph = graph.get_sub_graph_mut(core_3d::graph::NAME).unwrap();
 
-            draw_3d_graph.add_node(graph::node::OUTLINE_PASS, stencil_node);
+            draw_3d_graph.add_node(graph::node::OUTLINE_PASS, outline_node);
 
             draw_3d_graph
                 .add_slot_edge(
@@ -132,81 +110,6 @@ impl Plugin for BlurredOutlinePlugin {
                 .add_node_edge(core_3d::graph::node::MAIN_PASS, graph::node::OUTLINE_PASS)
                 .unwrap();
         }
-    }
-}
-
-struct MeshStencil {
-    pub distance: f32,
-    pub pipeline: CachedRenderPipelineId,
-    pub entity: Entity,
-    pub draw_function: DrawFunctionId,
-}
-
-impl PhaseItem for MeshStencil {
-    type SortKey = FloatOrd;
-
-    fn sort_key(&self) -> Self::SortKey {
-        FloatOrd(self.distance)
-    }
-
-    fn draw_function(&self) -> DrawFunctionId {
-        self.draw_function
-    }
-}
-
-impl EntityPhaseItem for MeshStencil {
-    fn entity(&self) -> Entity {
-        self.entity
-    }
-}
-
-impl CachedRenderPipelinePhaseItem for MeshStencil {
-    fn cached_pipeline(&self) -> CachedRenderPipelineId {
-        self.pipeline
-    }
-}
-
-type DrawMeshStencil = (
-    SetItemPipeline,
-    SetMeshViewBindGroup<0>,
-    SetMeshBindGroup<1>,
-    DrawMesh,
-);
-
-#[derive(Resource)]
-pub struct StencilPipeline {
-    mesh_pipeline: MeshPipeline,
-}
-
-impl FromWorld for StencilPipeline {
-    fn from_world(world: &mut World) -> Self {
-        let mesh_pipeline = world.resource::<MeshPipeline>().clone();
-        StencilPipeline { mesh_pipeline }
-    }
-}
-
-impl SpecializedMeshPipeline for StencilPipeline {
-    type Key = MeshPipelineKey;
-
-    fn specialize(
-        &self,
-        key: Self::Key,
-        layout: &Hashed<InnerMeshVertexBufferLayout, FixedState>,
-    ) -> Result<RenderPipelineDescriptor, SpecializedMeshPipelineError> {
-        let mut desc = self.mesh_pipeline.specialize(key, layout)?;
-
-        desc.label = Some("mesh_stencil_pipeline".into());
-
-        desc.layout = Some(vec![
-            self.mesh_pipeline.view_layout.clone(),
-            self.mesh_pipeline.mesh_layout.clone(),
-            // TODO add bind group with configurable color
-        ]);
-        desc.vertex.shader = STENCIL_SHADER_HANDLE.typed::<Shader>();
-        desc.fragment = fragment_state(STENCIL_SHADER_HANDLE, "fragment", &[color_target(None)]);
-        desc.depth_stencil = None;
-
-        Ok(desc)
     }
 }
 
@@ -345,21 +248,17 @@ impl FromWorld for OutlinePipelines {
     }
 }
 
-/// Make sure all 3d cameras have a [`MeshStencil`] [`RenderPhase`]
-fn extract_stencil_phase(
+fn extract_blur_uniform(
     mut commands: Commands,
     cameras: Extract<Query<(Entity, &Camera, Option<&OutlineSettings>), With<Camera3d>>>,
 ) {
     for (entity, camera, settings) in cameras.iter() {
-        let mut entity = commands.get_or_spawn(entity);
-        entity.insert(RenderPhase::<MeshStencil>::default());
-
         if let (Some((origin, _)), Some(size), Some(target_size)) = (
             camera.physical_viewport_rect(),
             camera.physical_viewport_size(),
             camera.physical_target_size(),
         ) {
-            entity.insert(BlurUniform {
+            commands.get_or_spawn(entity).insert(BlurUniform {
                 size: settings.map(|s| s.size).unwrap_or(8.0),
                 dims: Vec2::ONE / size.as_vec2(),
                 viewport: UVec4::new(origin.x, origin.y, size.x, size.y).as_vec4()
@@ -379,6 +278,10 @@ fn prepare_outline_resources(
     cameras: Query<(Entity, &ExtractedCamera)>,
     uniforms: Res<ComponentUniforms<BlurUniform>>,
 ) {
+    let Some(uniform) = uniforms.binding() else {
+        return;
+    };
+
     for (entity, camera) in &cameras {
         let Some(UVec2 { x, y }) = camera.physical_viewport_size else {
             continue;
@@ -415,9 +318,6 @@ fn prepare_outline_resources(
         };
         let vertical_blur_texture = texture_cache.get(&render_device, blur_desc.clone());
         let horizontal_blur_texture = texture_cache.get(&render_device, blur_desc.clone());
-        let Some(uniform) = uniforms.binding() else {
-            return;
-        };
 
         let vertical_blur_bind_group = render_device.create_bind_group(&BindGroupDescriptor {
             label: Some("outline_vertical_blur_bind_group"),
@@ -457,52 +357,5 @@ fn prepare_outline_resources(
             vertical_blur_texture,
             horizontal_blur_texture,
         });
-    }
-}
-
-/// Add any visible entity with a mesh and an [`Outline`] to the stencil_phase
-fn queue_mesh_stencil(
-    stencil_draw_functions: Res<DrawFunctions<MeshStencil>>,
-    stencil_pipeline: Res<StencilPipeline>,
-    mut pipelines: ResMut<SpecializedMeshPipelines<StencilPipeline>>,
-    mut pipeline_cache: ResMut<PipelineCache>,
-    render_meshes: Res<RenderAssets<Mesh>>,
-    outline_meshes: Query<(Entity, &Handle<Mesh>, &MeshUniform), With<Outline>>,
-    mut views: Query<(
-        &ExtractedView,
-        &mut VisibleEntities,
-        &mut RenderPhase<MeshStencil>,
-    )>,
-) {
-    let draw_outline = stencil_draw_functions
-        .read()
-        .get_id::<DrawMeshStencil>()
-        .unwrap();
-
-    for (view, visible_entities, mut stencil_phase) in views.iter_mut() {
-        let view_matrix = view.transform.compute_matrix();
-        let inv_view_row_2 = view_matrix.inverse().row(2);
-
-        for visible_entity in visible_entities.entities.iter().copied() {
-            let Ok((entity, mesh_handle, mesh_uniform)) = outline_meshes.get(visible_entity) else {
-                continue;
-            };
-            let Some(mesh) = render_meshes.get(mesh_handle) else {
-                continue;
-            };
-
-            let key = MeshPipelineKey::from_primitive_topology(mesh.primitive_topology);
-
-            let pipeline = pipelines
-                .specialize(&mut pipeline_cache, &stencil_pipeline, key, &mesh.layout)
-                .unwrap();
-
-            stencil_phase.add(MeshStencil {
-                entity,
-                pipeline,
-                draw_function: draw_outline,
-                distance: inv_view_row_2.dot(mesh_uniform.transform.col(3)),
-            });
-        }
     }
 }

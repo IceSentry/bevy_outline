@@ -44,7 +44,7 @@ fn setup(
             ..Default::default()
         },
         RotationAxis(Vec3::Y),
-        Outline,
+        Outline { color: Color::BLUE },
     ));
 
     commands.spawn((
@@ -54,15 +54,21 @@ fn setup(
             ..Default::default()
         },
         RotationAxis(Vec3::X),
-        Outline,
+        Outline {
+            color: Color::GREEN,
+        },
     ));
 
-    commands.spawn(PbrBundle {
-        mesh: meshes.add(Cube { size: 1.0 }.into()),
-        material: materials.add(Color::RED.into()),
-        transform: Transform::from_xyz(1.15, 0.0, 0.0),
-        ..Default::default()
-    });
+    commands.spawn((
+        PbrBundle {
+            mesh: meshes.add(Cube { size: 1.0 }.into()),
+            material: materials.add(Color::RED.into()),
+            transform: Transform::from_xyz(1.5, 0.0, 0.0),
+            ..Default::default()
+        },
+        RotationAxis(Vec3::Z),
+        Outline { color: Color::RED },
+    ));
 }
 
 #[derive(Clone, Debug, Component)]
