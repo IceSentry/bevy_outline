@@ -78,6 +78,7 @@ impl Plugin for BlurredOutlinePlugin {
         app.add_plugin(ExtractComponentPlugin::<Outline>::default())
             .add_plugin(ExtractComponentPlugin::<OutlineSettings>::default())
             .add_plugin(UniformComponentPlugin::<BlurUniform>::default())
+            .add_plugin(UniformComponentPlugin::<IntensityUniform>::default())
             .add_plugin(MeshStencilPlugin);
 
         let Ok(render_app) = app.get_sub_app_mut(RenderApp) else {
@@ -115,6 +116,7 @@ impl Plugin for BlurredOutlinePlugin {
 #[derive(Component, Clone, Copy, Debug, Default)]
 pub struct OutlineSettings {
     pub size: f32,
+    pub intensity: f32,
 }
 
 impl ExtractComponent for OutlineSettings {
@@ -132,6 +134,11 @@ struct BlurUniform {
     size: f32,
     dims: Vec2,
     viewport: Vec4,
+}
+
+#[derive(Component, ShaderType, Clone)]
+struct IntensityUniform {
+    value: f32,
 }
 
 #[derive(Component)]
@@ -179,6 +186,7 @@ impl FromWorld for OutlinePipelines {
                     0 => texture,
                     // sampler
                     1 => BindingType::Sampler(SamplerBindingType::Filtering),
+                    // uniform
                     2 => BindingType::Buffer {
                         ty: BufferBindingType::Uniform,
                         has_dynamic_offset: true,
@@ -196,13 +204,19 @@ impl FromWorld for OutlinePipelines {
                     1 => texture,
                     // blur texture
                     2 => texture,
+                    // Intensity
+                    3 => BindingType::Buffer {
+                        ty: BufferBindingType::Uniform,
+                        has_dynamic_offset: true,
+                        min_binding_size: Some(IntensityUniform::min_size()),
+                    },
                 ],
             });
 
         let mut pipeline_cache = world.resource_mut::<PipelineCache>();
 
         let vertical_blur_pipeline = pipeline_cache.queue_render_pipeline(
-            RenderPipelineDescriptorBuilder::default_fullscreen()
+            RenderPipelineDescriptorBuilder::fullscreen()
                 .label("vertical_blur_pipeline")
                 .fragment(BLUR_SHADER_HANDLE, "vertical_blur", &[color_target(None)])
                 .layout(vec![blur_bind_group_layout.clone()])
@@ -210,7 +224,7 @@ impl FromWorld for OutlinePipelines {
         );
 
         let horizontal_blur_pipeline = pipeline_cache.queue_render_pipeline(
-            RenderPipelineDescriptorBuilder::default_fullscreen()
+            RenderPipelineDescriptorBuilder::fullscreen()
                 .label("horizontal_blur_pipeline")
                 .fragment(BLUR_SHADER_HANDLE, "horizontal_blur", &[color_target(None)])
                 .layout(vec![blur_bind_group_layout.clone()])
@@ -218,7 +232,7 @@ impl FromWorld for OutlinePipelines {
         );
 
         let combine_pipeline = pipeline_cache.queue_render_pipeline(
-            RenderPipelineDescriptorBuilder::default_fullscreen()
+            RenderPipelineDescriptorBuilder::fullscreen()
                 .label("combine_pipeline")
                 .fragment(
                     COMBINE_SHADER_HANDLE,
@@ -257,13 +271,18 @@ fn extract_blur_uniform(
             camera.physical_viewport_size(),
             camera.physical_target_size(),
         ) {
-            commands.get_or_spawn(entity).insert(BlurUniform {
-                size: settings.map(|s| s.size).unwrap_or(8.0),
-                dims: Vec2::ONE / size.as_vec2(),
-                viewport: UVec4::new(origin.x, origin.y, size.x, size.y).as_vec4()
-                    / UVec4::new(target_size.x, target_size.y, target_size.x, target_size.y)
-                        .as_vec4(),
-            });
+            commands
+                .get_or_spawn(entity)
+                .insert(BlurUniform {
+                    size: settings.map(|s| s.size).unwrap_or(8.0),
+                    dims: Vec2::ONE / size.as_vec2(),
+                    viewport: UVec4::new(origin.x, origin.y, size.x, size.y).as_vec4()
+                        / UVec4::new(target_size.x, target_size.y, target_size.x, target_size.y)
+                            .as_vec4(),
+                })
+                .insert(IntensityUniform {
+                    value: settings.map(|s| s.intensity).unwrap_or(1.0),
+                });
         }
     }
 }
@@ -275,9 +294,10 @@ fn prepare_outline_resources(
     pipelines: Res<OutlinePipelines>,
     mut texture_cache: ResMut<TextureCache>,
     cameras: Query<(Entity, &ExtractedCamera)>,
-    uniforms: Res<ComponentUniforms<BlurUniform>>,
+    blur_uniforms: Res<ComponentUniforms<BlurUniform>>,
+    intensity_uniforms: Res<ComponentUniforms<IntensityUniform>>,
 ) {
-    let Some(uniform) = uniforms.binding() else {
+    let (Some(blur_uniforms), Some(intensity_uniforms)) = (blur_uniforms.binding(), intensity_uniforms.binding()) else {
         return;
     };
 
@@ -286,10 +306,9 @@ fn prepare_outline_resources(
             continue;
         };
 
-        // TODO make this configurable
         let size = Extent3d {
-            width: x,  // (x / 2).max(1),
-            height: y, // (y / 2).max(1),
+            width: x,
+            height: y,
             depth_or_array_layers: 1,
         };
 
@@ -324,7 +343,7 @@ fn prepare_outline_resources(
             entries: &bind_group_entries![
                 0 => BindingResource::TextureView(&stencil_texture.default_view),
                 1 => BindingResource::Sampler(&pipelines.sampler),
-                2 => uniform.clone(),
+                2 => blur_uniforms.clone(),
             ],
         });
 
@@ -334,7 +353,7 @@ fn prepare_outline_resources(
             entries: &bind_group_entries![
                 0 => BindingResource::TextureView(&vertical_blur_texture.default_view),
                 1 => BindingResource::Sampler(&pipelines.sampler),
-                2 => uniform.clone(),
+                2 => blur_uniforms.clone(),
             ],
         });
 
@@ -345,6 +364,7 @@ fn prepare_outline_resources(
                 0 => BindingResource::Sampler(&pipelines.sampler),
                 1 => BindingResource::TextureView(&stencil_texture.default_view),
                 2 => BindingResource::TextureView(&horizontal_blur_texture.default_view),
+                3 => intensity_uniforms.clone(),
             ],
         });
 

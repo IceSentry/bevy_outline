@@ -87,7 +87,10 @@ fn setup(
                 .looking_at(Vec3::new(0., 1., 0.), Vec3::Y),
             ..default()
         },
-        OutlineSettings { size: 16.0 },
+        OutlineSettings {
+            size: 16.0,
+            intensity: 2.0,
+        },
     ));
 }
 

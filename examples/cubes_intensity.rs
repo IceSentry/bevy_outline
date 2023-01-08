@@ -9,7 +9,7 @@ fn main() {
         }))
         .add_plugin(BlurredOutlinePlugin)
         .add_startup_system(setup)
-        .add_system(rotate)
+        // .add_system(rotate)
         .add_system(update_outline)
         .run();
 }
@@ -34,8 +34,8 @@ fn setup(
             ..default()
         },
         OutlineSettings {
-            size: 1.0,
-            intensity: 1.0,
+            size: 16.0,
+            intensity: 5.0,
         },
     ));
 
@@ -46,7 +46,6 @@ fn setup(
             transform: Transform::from_xyz(-1.25, 0.0, 0.5),
             ..Default::default()
         },
-        RotationAxis(Vec3::Y),
         Outline { color: Color::BLUE },
     ));
 
@@ -56,7 +55,6 @@ fn setup(
             material: materials.add(Color::RED.into()),
             ..Default::default()
         },
-        RotationAxis(Vec3::X),
         Outline {
             color: Color::GREEN,
         },
@@ -69,24 +67,13 @@ fn setup(
             transform: Transform::from_xyz(1.5, 0.0, 0.0),
             ..Default::default()
         },
-        RotationAxis(Vec3::Z),
         Outline { color: Color::RED },
     ));
 }
 
-#[derive(Clone, Debug, Component)]
-struct RotationAxis(Vec3);
-
-fn rotate(time: Res<Time>, mut query: Query<(&mut Transform, &RotationAxis)>) {
-    let delta = time.delta_seconds();
-
-    for (mut xform, rot) in query.iter_mut() {
-        xform.rotate(Quat::from_axis_angle(rot.0, delta));
-    }
-}
-
 fn update_outline(mut q: Query<&mut OutlineSettings>, time: Res<Time>) {
     for mut settings in &mut q {
-        settings.size = (time.elapsed_seconds_wrapped().sin() * 0.5 + 0.5) * 32.0;
+        settings.intensity =
+            (((time.elapsed_seconds_wrapped().sin() * 0.5 + 0.5) / 1.5) * 5.0) + 0.25;
     }
 }

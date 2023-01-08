@@ -12,7 +12,7 @@ use bevy::{
     },
 };
 
-use crate::{stencil_phase::MeshStencil, BlurUniform, OutlineResources};
+use crate::{stencil_phase::MeshStencil, BlurUniform, IntensityUniform, OutlineResources};
 
 use super::OutlinePipelines;
 
@@ -23,6 +23,7 @@ pub struct OutlineNode {
         &'static RenderPhase<MeshStencil>,
         &'static OutlineResources,
         &'static DynamicUniformIndex<BlurUniform>,
+        &'static DynamicUniformIndex<IntensityUniform>,
     )>,
 }
 
@@ -52,7 +53,7 @@ impl Node for OutlineNode {
         world: &World,
     ) -> Result<(), bevy::render::render_graph::NodeRunError> {
         let view_entity = graph.get_input_entity(Self::IN_VIEW)?;
-        let Ok((view_target, stencil_phase, resources, uniform_index)) = self.query.get_manual(world, view_entity) else {
+        let Ok((view_target, stencil_phase, resources, blur_uniform_index, intensity_uniform_index)) = self.query.get_manual(world, view_entity) else {
             return Ok(());
         };
 
@@ -125,7 +126,7 @@ impl Node for OutlineNode {
             vertical_blur_pass.set_bind_group(
                 0,
                 &resources.vertical_blur_bind_group,
-                &[uniform_index.index()],
+                &[blur_uniform_index.index()],
             );
             vertical_blur_pass.draw(0..3, 0..1);
         }
@@ -152,7 +153,7 @@ impl Node for OutlineNode {
             horizontal_blur_pass.set_bind_group(
                 0,
                 &resources.horizontal_blur_bind_group,
-                &[uniform_index.index()],
+                &[blur_uniform_index.index()],
             );
             horizontal_blur_pass.draw(0..3, 0..1);
         }
@@ -174,7 +175,11 @@ impl Node for OutlineNode {
             );
 
             combine_pass.set_render_pipeline(combine_pipeline);
-            combine_pass.set_bind_group(0, &resources.combine_bind_group, &[]);
+            combine_pass.set_bind_group(
+                0,
+                &resources.combine_bind_group,
+                &[intensity_uniform_index.index()],
+            );
             combine_pass.draw(0..3, 0..1);
         }
 

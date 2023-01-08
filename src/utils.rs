@@ -77,7 +77,7 @@ impl RenderPipelineDescriptorBuilder {
         }
     }
 
-    pub fn default_fullscreen() -> RenderPipelineDescriptorBuilder {
+    pub fn fullscreen() -> RenderPipelineDescriptorBuilder {
         Self {
             desc: RenderPipelineDescriptor {
                 fragment: None,
