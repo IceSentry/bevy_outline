@@ -18,11 +18,10 @@ use bevy::{
         render_graph::RenderGraph,
         render_resource::{
             AddressMode, BindGroup, BindGroupDescriptor, BindGroupLayout,
-            BindGroupLayoutDescriptor, BindingResource, BindingType, BlendComponent, BlendFactor,
-            BlendOperation, BlendState, BufferBindingType, CachedRenderPipelineId, Extent3d,
-            FilterMode, PipelineCache, Sampler, SamplerBindingType, SamplerDescriptor, ShaderType,
-            TextureDescriptor, TextureDimension, TextureFormat, TextureSampleType, TextureUsages,
-            TextureViewDimension,
+            BindGroupLayoutDescriptor, BindingResource, BindingType, BlendState, BufferBindingType,
+            CachedRenderPipelineId, Extent3d, FilterMode, PipelineCache, Sampler,
+            SamplerBindingType, SamplerDescriptor, ShaderType, TextureDescriptor, TextureDimension,
+            TextureFormat, TextureSampleType, TextureUsages, TextureViewDimension,
         },
         renderer::RenderDevice,
         texture::{BevyDefault, CachedTexture, TextureCache},
@@ -64,8 +63,8 @@ pub mod graph {
     }
 }
 
-pub struct BlurredOutlinePlugin;
-impl Plugin for BlurredOutlinePlugin {
+pub struct OutlinePlugin;
+impl Plugin for OutlinePlugin {
     fn build(&self, app: &mut App) {
         load_internal_asset!(app, BLUR_SHADER_HANDLE, "blur.wgsl", Shader::from_wgsl);
         load_internal_asset!(
@@ -115,7 +114,9 @@ impl Plugin for BlurredOutlinePlugin {
 
 #[derive(Component, Clone, Copy, Debug, Default)]
 pub struct OutlineSettings {
+    // The size or thickness of the outline, higher numbers will create thicker outlines
     pub size: f32,
+    // The intensity of the outline. The higher it is, the more opaque it will be. If you want a solid outline, I would suggest setting this to something like 64.0
     pub intensity: f32,
 }
 
@@ -237,14 +238,8 @@ impl FromWorld for OutlinePipelines {
                 .fragment(
                     COMBINE_SHADER_HANDLE,
                     "combine",
-                    &[color_target(Some(BlendState {
-                        color: BlendComponent {
-                            src_factor: BlendFactor::One,
-                            dst_factor: BlendFactor::One,
-                            operation: BlendOperation::Add,
-                        },
-                        alpha: BlendComponent::REPLACE,
-                    }))],
+                    // Additive blending
+                    &[color_target(Some(BlendState::PREMULTIPLIED_ALPHA_BLENDING))],
                 )
                 .layout(vec![combine_bind_group_layout.clone()])
                 .build(),

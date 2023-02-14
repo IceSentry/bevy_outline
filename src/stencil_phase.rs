@@ -178,11 +178,15 @@ impl SpecializedMeshPipeline for StencilPipeline {
 
         desc.label = Some("mesh_stencil_pipeline".into());
 
-        desc.layout = Some(vec![
-            self.mesh_pipeline.view_layout.clone(),
-            self.mesh_pipeline.mesh_layout.clone(),
-            self.stencil_bind_group_layout.clone(),
-        ]);
+        let mut bind_group_layout = vec![self.mesh_pipeline.view_layout.clone()];
+        if desc.vertex.shader_defs.contains(&"SKINNED".to_string()) {
+            bind_group_layout.push(self.mesh_pipeline.skinned_mesh_layout.clone());
+        } else {
+            bind_group_layout.push(self.mesh_pipeline.mesh_layout.clone());
+        };
+        bind_group_layout.push(self.stencil_bind_group_layout.clone());
+
+        desc.layout = Some(bind_group_layout);
         desc.vertex.shader = STENCIL_SHADER_HANDLE.typed::<Shader>();
         desc.fragment = fragment_state(STENCIL_SHADER_HANDLE, "fragment", &[color_target(None)]);
         desc.depth_stencil = None;

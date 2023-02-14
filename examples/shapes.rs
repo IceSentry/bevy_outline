@@ -4,13 +4,13 @@
 use std::f32::consts::PI;
 
 use bevy::prelude::*;
-use bevy_outline::{BlurredOutlinePlugin, Outline, OutlineSettings};
+use bevy_outline::{Outline, OutlinePlugin, OutlineSettings};
 use nanorand::Rng;
 
 fn main() {
     App::new()
         .add_plugins(DefaultPlugins.set(ImagePlugin::default_nearest()))
-        .add_plugin(BlurredOutlinePlugin)
+        .add_plugin(OutlinePlugin)
         .add_startup_system(setup)
         .add_system(rotate)
         .add_system(update_outline)
@@ -102,7 +102,7 @@ fn rotate(mut query: Query<&mut Transform, With<Shape>>, time: Res<Time>) {
 
 fn update_outline(mut q: Query<&mut OutlineSettings>, time: Res<Time>) {
     for mut settings in &mut q {
-        settings.size = (time.elapsed_seconds_wrapped().sin() * 0.5 + 0.5) * 32.0;
+        settings.size = (time.elapsed_seconds_wrapped().sin() * 0.5 + 0.5) * 16.0;
     }
 }
 

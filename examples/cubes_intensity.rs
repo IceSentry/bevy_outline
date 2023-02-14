@@ -1,5 +1,5 @@
 use bevy::prelude::{shape::Cube, *};
-use bevy_outline::{BlurredOutlinePlugin, Outline, OutlineSettings};
+use bevy_outline::{Outline, OutlinePlugin, OutlineSettings};
 
 fn main() {
     App::new()
@@ -7,7 +7,7 @@ fn main() {
             watch_for_changes: true,
             ..default()
         }))
-        .add_plugin(BlurredOutlinePlugin)
+        .add_plugin(OutlinePlugin)
         .add_startup_system(setup)
         // .add_system(rotate)
         .add_system(update_outline)
