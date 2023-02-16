@@ -3,10 +3,7 @@ use bevy_outline::{Outline, OutlinePlugin, OutlineSettings};
 
 fn main() {
     App::new()
-        .add_plugins(DefaultPlugins.set(AssetPlugin {
-            watch_for_changes: true,
-            ..default()
-        }))
+        .add_plugins(DefaultPlugins)
         .add_plugin(OutlinePlugin)
         .add_startup_system(setup)
         .add_system(rotate)
@@ -79,9 +76,8 @@ struct RotationAxis(Vec3);
 
 fn rotate(time: Res<Time>, mut query: Query<(&mut Transform, &RotationAxis)>) {
     let delta = time.delta_seconds();
-
-    for (mut xform, rot) in query.iter_mut() {
-        xform.rotate(Quat::from_axis_angle(rot.0, delta));
+    for (mut transform, rot) in query.iter_mut() {
+        transform.rotate(Quat::from_axis_angle(rot.0, delta));
     }
 }
 
