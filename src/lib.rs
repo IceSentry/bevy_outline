@@ -1,6 +1,7 @@
 #![allow(clippy::type_complexity)]
 #![allow(clippy::too_many_arguments)]
 
+mod blur_pipeline;
 pub mod node;
 mod stencil_phase;
 mod utils;
@@ -20,17 +21,19 @@ use bevy::{
             AddressMode, BindGroup, BindGroupDescriptor, BindGroupLayout,
             BindGroupLayoutDescriptor, BindingResource, BindingType, BlendState, BufferBindingType,
             CachedRenderPipelineId, Extent3d, FilterMode, PipelineCache, Sampler,
-            SamplerBindingType, SamplerDescriptor, ShaderType, TextureDescriptor, TextureDimension,
-            TextureFormat, TextureSampleType, TextureUsages, TextureViewDimension,
+            SamplerBindingType, SamplerDescriptor, ShaderType, SpecializedRenderPipelines,
+            TextureDescriptor, TextureDimension, TextureFormat, TextureSampleType, TextureUsages,
+            TextureViewDimension,
         },
         renderer::RenderDevice,
         texture::{BevyDefault, CachedTexture, TextureCache},
         Extract, RenderApp, RenderStage,
     },
 };
+use blur_pipeline::{BlurDirection, BlurPipeline, BlurPipelineKey, BlurType};
 use utils::{color_target, RenderPipelineDescriptorBuilder};
 
-use crate::{node::OutlineNode, stencil_phase::MeshStencilPlugin};
+use crate::{blur_pipeline::BlurUniform, node::OutlineNode, stencil_phase::MeshStencilPlugin};
 
 const BLUR_SHADER_HANDLE: HandleUntyped =
     HandleUntyped::weak_from_u64(Shader::TYPE_UUID, 14687827633551304793);
@@ -85,9 +88,12 @@ impl Plugin for OutlinePlugin {
         };
 
         render_app
-            .init_resource::<OutlinePipelines>()
-            .add_system_to_stage(RenderStage::Extract, extract_blur_uniform)
-            .add_system_to_stage(RenderStage::Prepare, prepare_outline_resources);
+            .init_resource::<BlurPipeline>()
+            .init_resource::<SpecializedRenderPipelines<BlurPipeline>>()
+            .init_resource::<BlurredOutlinePipelines>()
+            .add_system_to_stage(RenderStage::Extract, extract_outline_settings)
+            .add_system_to_stage(RenderStage::Prepare, prepare_outline_resources)
+            .add_system_to_stage(RenderStage::Prepare, prepare_pipelines);
 
         {
             let outline_node = OutlineNode::new(&mut render_app.world);
@@ -112,12 +118,27 @@ impl Plugin for OutlinePlugin {
     }
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum OutlineType {
+    BoxBlur,
+    GaussianBlur,
+    MaxFilter,
+    Jfa,
+}
+
+impl Default for OutlineType {
+    fn default() -> Self {
+        OutlineType::BoxBlur
+    }
+}
+
 #[derive(Component, Clone, Copy, Debug, Default)]
 pub struct OutlineSettings {
-    // The size or thickness of the outline, higher numbers will create thicker outlines
+    // The size or thickness of the outline, higher numbers will create wider outlines
     pub size: f32,
-    // The intensity of the outline. The higher it is, the more opaque it will be. If you want a solid outline, I would suggest setting this to something like 64.0
+    // The intensity of the outline. Only useful for blurred outlines. Does nothing for other types of outline.
     pub intensity: f32,
+    pub outline_type: OutlineType,
 }
 
 impl ExtractComponent for OutlineSettings {
@@ -129,21 +150,13 @@ impl ExtractComponent for OutlineSettings {
         *item
     }
 }
-
-#[derive(Component, ShaderType, Clone)]
-struct BlurUniform {
-    size: f32,
-    dims: Vec2,
-    viewport: Vec4,
-}
-
 #[derive(Component, ShaderType, Clone)]
 struct IntensityUniform {
     value: f32,
 }
 
 #[derive(Component)]
-struct OutlineResources {
+struct BlurredOutlineResources {
     stencil_texture: CachedTexture,
     vertical_blur_texture: CachedTexture,
     horizontal_blur_texture: CachedTexture,
@@ -153,17 +166,19 @@ struct OutlineResources {
 }
 
 #[derive(Resource)]
-struct OutlinePipelines {
+struct BlurredOutlinePipelines {
     sampler: Sampler,
-    blur_bind_group_layout: BindGroupLayout,
+    vertical_blur_pipeline: BlurPipeline,
+    horizontal_blur_pipeline: BlurPipeline,
     combine_bind_group_layout: BindGroupLayout,
-    horizontal_blur_pipeline: CachedRenderPipelineId,
-    vertical_blur_pipeline: CachedRenderPipelineId,
     combine_pipeline: CachedRenderPipelineId,
 }
 
-impl FromWorld for OutlinePipelines {
+impl FromWorld for BlurredOutlinePipelines {
     fn from_world(world: &mut World) -> Self {
+        let vertical_blur_pipeline = BlurPipeline::from_world(world);
+        let horizontal_blur_pipeline = BlurPipeline::from_world(world);
+
         let render_device = world.resource::<RenderDevice>();
 
         let sampler = render_device.create_sampler(&SamplerDescriptor {
@@ -179,22 +194,6 @@ impl FromWorld for OutlinePipelines {
             multisampled: false,
         };
 
-        let blur_bind_group_layout =
-            render_device.create_bind_group_layout(&BindGroupLayoutDescriptor {
-                label: Some("blur_bind_group_layout"),
-                entries: &bind_group_layout_entries![
-                    // stencil texture
-                    0 => texture,
-                    // sampler
-                    1 => BindingType::Sampler(SamplerBindingType::Filtering),
-                    // uniform
-                    2 => BindingType::Buffer {
-                        ty: BufferBindingType::Uniform,
-                        has_dynamic_offset: true,
-                        min_binding_size: Some(BlurUniform::min_size()),
-                    },
-                ],
-            });
         let combine_bind_group_layout =
             render_device.create_bind_group_layout(&BindGroupLayoutDescriptor {
                 label: Some("combine_bind_group_layout"),
@@ -205,7 +204,7 @@ impl FromWorld for OutlinePipelines {
                     1 => texture,
                     // blur texture
                     2 => texture,
-                    // Intensity
+                    // intensity
                     3 => BindingType::Buffer {
                         ty: BufferBindingType::Uniform,
                         has_dynamic_offset: true,
@@ -216,22 +215,6 @@ impl FromWorld for OutlinePipelines {
 
         let mut pipeline_cache = world.resource_mut::<PipelineCache>();
 
-        let vertical_blur_pipeline = pipeline_cache.queue_render_pipeline(
-            RenderPipelineDescriptorBuilder::fullscreen()
-                .label("vertical_blur_pipeline")
-                .fragment(BLUR_SHADER_HANDLE, "vertical_blur", &[color_target(None)])
-                .layout(vec![blur_bind_group_layout.clone()])
-                .build(),
-        );
-
-        let horizontal_blur_pipeline = pipeline_cache.queue_render_pipeline(
-            RenderPipelineDescriptorBuilder::fullscreen()
-                .label("horizontal_blur_pipeline")
-                .fragment(BLUR_SHADER_HANDLE, "horizontal_blur", &[color_target(None)])
-                .layout(vec![blur_bind_group_layout.clone()])
-                .build(),
-        );
-
         let combine_pipeline = pipeline_cache.queue_render_pipeline(
             RenderPipelineDescriptorBuilder::fullscreen()
                 .label("combine_pipeline")
@@ -240,6 +223,7 @@ impl FromWorld for OutlinePipelines {
                     "combine",
                     // Additive blending
                     &[color_target(Some(BlendState::PREMULTIPLIED_ALPHA_BLENDING))],
+                    &[],
                 )
                 .layout(vec![combine_bind_group_layout.clone()])
                 .build(),
@@ -247,18 +231,17 @@ impl FromWorld for OutlinePipelines {
 
         Self {
             sampler,
-            blur_bind_group_layout,
-            combine_bind_group_layout,
             vertical_blur_pipeline,
             horizontal_blur_pipeline,
+            combine_bind_group_layout,
             combine_pipeline,
         }
     }
 }
 
-fn extract_blur_uniform(
+fn extract_outline_settings(
     mut commands: Commands,
-    cameras: Extract<Query<(Entity, &Camera, Option<&OutlineSettings>), With<Camera3d>>>,
+    cameras: Extract<Query<(Entity, &Camera, &OutlineSettings), With<Camera3d>>>,
 ) {
     for (entity, camera, settings) in cameras.iter() {
         if let (Some((origin, _)), Some(size), Some(target_size)) = (
@@ -269,15 +252,67 @@ fn extract_blur_uniform(
             commands
                 .get_or_spawn(entity)
                 .insert(BlurUniform {
-                    size: settings.map(|s| s.size).unwrap_or(8.0),
+                    size: settings.size,
                     dims: Vec2::ONE / size.as_vec2(),
                     viewport: UVec4::new(origin.x, origin.y, size.x, size.y).as_vec4()
                         / UVec4::new(target_size.x, target_size.y, target_size.x, target_size.y)
                             .as_vec4(),
                 })
                 .insert(IntensityUniform {
-                    value: settings.map(|s| s.intensity).unwrap_or(1.0),
-                });
+                    value: settings.intensity,
+                })
+                .insert(*settings);
+        }
+    }
+}
+
+#[derive(Component)]
+struct BlurPipelines {
+    vertical_blur_pipeline_id: CachedRenderPipelineId,
+    horizontal_blur_pipeline_id: CachedRenderPipelineId,
+}
+
+fn prepare_pipelines(
+    mut commands: Commands,
+    mut pipeline_cache: ResMut<PipelineCache>,
+    mut pipelines: ResMut<SpecializedRenderPipelines<BlurPipeline>>,
+    fxaa_pipeline: Res<BlurPipeline>,
+    views: Query<(Entity, &OutlineSettings)>,
+) {
+    for (entity, settings) in &views {
+        if matches!(
+            settings.outline_type,
+            OutlineType::BoxBlur | OutlineType::GaussianBlur
+        ) {
+            let vertical_blur_pipeline_id = pipelines.specialize(
+                &mut pipeline_cache,
+                &fxaa_pipeline,
+                BlurPipelineKey {
+                    blur_type: match settings.outline_type {
+                        OutlineType::BoxBlur => BlurType::Box,
+                        OutlineType::GaussianBlur => BlurType::Gaussian,
+                        _ => unreachable!(),
+                    },
+                    direction: BlurDirection::Vertical,
+                },
+            );
+            let horizontal_blur_pipeline_id = pipelines.specialize(
+                &mut pipeline_cache,
+                &fxaa_pipeline,
+                BlurPipelineKey {
+                    blur_type: match settings.outline_type {
+                        OutlineType::BoxBlur => BlurType::Box,
+                        OutlineType::GaussianBlur => BlurType::Gaussian,
+                        _ => unreachable!(),
+                    },
+                    direction: BlurDirection::Horizontal,
+                },
+            );
+
+            commands.entity(entity).insert(BlurPipelines {
+                vertical_blur_pipeline_id,
+                horizontal_blur_pipeline_id,
+            });
         }
     }
 }
@@ -286,7 +321,7 @@ fn extract_blur_uniform(
 fn prepare_outline_resources(
     mut commands: Commands,
     render_device: Res<RenderDevice>,
-    pipelines: Res<OutlinePipelines>,
+    pipelines: Res<BlurredOutlinePipelines>,
     mut texture_cache: ResMut<TextureCache>,
     cameras: Query<(Entity, &ExtractedCamera)>,
     blur_uniforms: Res<ComponentUniforms<BlurUniform>>,
@@ -334,7 +369,7 @@ fn prepare_outline_resources(
 
         let vertical_blur_bind_group = render_device.create_bind_group(&BindGroupDescriptor {
             label: Some("outline_vertical_blur_bind_group"),
-            layout: &pipelines.blur_bind_group_layout,
+            layout: &pipelines.vertical_blur_pipeline.layout,
             entries: &bind_group_entries![
                 0 => BindingResource::TextureView(&stencil_texture.default_view),
                 1 => BindingResource::Sampler(&pipelines.sampler),
@@ -344,7 +379,7 @@ fn prepare_outline_resources(
 
         let horizontal_blur_bind_group = render_device.create_bind_group(&BindGroupDescriptor {
             label: Some("outline_horizontal_blur_bind_group"),
-            layout: &pipelines.blur_bind_group_layout,
+            layout: &pipelines.horizontal_blur_pipeline.layout,
             entries: &bind_group_entries![
                 0 => BindingResource::TextureView(&vertical_blur_texture.default_view),
                 1 => BindingResource::Sampler(&pipelines.sampler),
@@ -363,7 +398,7 @@ fn prepare_outline_resources(
             ],
         });
 
-        commands.entity(entity).insert(OutlineResources {
+        commands.entity(entity).insert(BlurredOutlineResources {
             vertical_blur_bind_group,
             horizontal_blur_bind_group,
             combine_bind_group,

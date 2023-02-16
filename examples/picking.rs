@@ -68,6 +68,7 @@ fn setup(
         OutlineSettings {
             size: 16.0,
             intensity: 1.5,
+            ..default()
         },
         PickingCameraBundle::default(),
     ));

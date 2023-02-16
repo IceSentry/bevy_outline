@@ -12,18 +12,22 @@ use bevy::{
     },
 };
 
-use crate::{stencil_phase::MeshStencil, BlurUniform, IntensityUniform, OutlineResources};
+use crate::{
+    stencil_phase::MeshStencil, BlurPipelines, BlurUniform, BlurredOutlineResources,
+    IntensityUniform,
+};
 
-use super::OutlinePipelines;
+use super::BlurredOutlinePipelines;
 
 /// Render node for drawing blurred outlines of selected meshes
 pub struct OutlineNode {
     query: QueryState<(
         &'static ViewTarget,
         &'static RenderPhase<MeshStencil>,
-        &'static OutlineResources,
+        &'static BlurredOutlineResources,
         &'static DynamicUniformIndex<BlurUniform>,
         &'static DynamicUniformIndex<IntensityUniform>,
+        &'static BlurPipelines,
     )>,
 }
 
@@ -53,16 +57,23 @@ impl Node for OutlineNode {
         world: &World,
     ) -> Result<(), bevy::render::render_graph::NodeRunError> {
         let view_entity = graph.get_input_entity(Self::IN_VIEW)?;
-        let Ok((view_target, stencil_phase, resources, blur_uniform_index, intensity_uniform_index)) = self.query.get_manual(world, view_entity) else {
+        let Ok((
+            view_target,
+            stencil_phase,
+            resources,
+            blur_uniform_index,
+            intensity_uniform_index,
+            blur_pipelines
+        )) = self.query.get_manual(world, view_entity) else {
             return Ok(());
         };
 
-        let pipelines = world.resource::<OutlinePipelines>();
+        let pipelines = world.resource::<BlurredOutlinePipelines>();
         let pipeline_cache = world.resource::<PipelineCache>();
 
         let (Some(vertical_blur_pipeline), Some(horizontal_blur_pipeline), Some(combine_pipeline)) = (
-            pipeline_cache.get_render_pipeline(pipelines.vertical_blur_pipeline),
-            pipeline_cache.get_render_pipeline(pipelines.horizontal_blur_pipeline),
+            pipeline_cache.get_render_pipeline(blur_pipelines.vertical_blur_pipeline_id),
+            pipeline_cache.get_render_pipeline(blur_pipelines.horizontal_blur_pipeline_id),
             pipeline_cache.get_render_pipeline(pipelines.combine_pipeline)
         ) else {
             return Ok(());

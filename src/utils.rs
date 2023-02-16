@@ -22,11 +22,12 @@ pub fn fragment_state(
     shader: HandleUntyped,
     entry_point: &'static str,
     targets: &[ColorTargetState],
+    shader_defs: &[String],
 ) -> Option<FragmentState> {
     Some(FragmentState {
         entry_point: entry_point.into(),
         shader: shader.typed::<Shader>(),
-        shader_defs: vec![],
+        shader_defs: shader_defs.to_vec(),
         targets: targets.iter().map(|target| Some(target.clone())).collect(),
     })
 }
@@ -101,8 +102,9 @@ impl RenderPipelineDescriptorBuilder {
         shader: HandleUntyped,
         entry_point: &'static str,
         targets: &[ColorTargetState],
+        shader_defs: &[String],
     ) -> Self {
-        self.desc.fragment = fragment_state(shader, entry_point, targets);
+        self.desc.fragment = fragment_state(shader, entry_point, targets, shader_defs);
         self
     }
 

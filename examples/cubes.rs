@@ -33,6 +33,7 @@ fn setup(
         OutlineSettings {
             size: 1.0,
             intensity: 1.0,
+            ..default()
         },
     ));
 

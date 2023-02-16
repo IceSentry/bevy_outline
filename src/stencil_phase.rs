@@ -188,7 +188,12 @@ impl SpecializedMeshPipeline for StencilPipeline {
 
         desc.layout = Some(bind_group_layout);
         desc.vertex.shader = STENCIL_SHADER_HANDLE.typed::<Shader>();
-        desc.fragment = fragment_state(STENCIL_SHADER_HANDLE, "fragment", &[color_target(None)]);
+        desc.fragment = fragment_state(
+            STENCIL_SHADER_HANDLE,
+            "fragment",
+            &[color_target(None)],
+            &[],
+        );
         desc.depth_stencil = None;
 
         Ok(desc)

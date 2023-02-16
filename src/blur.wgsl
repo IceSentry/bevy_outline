@@ -11,12 +11,6 @@ var stencil_sampler: sampler;
 @group(0) @binding(2)
 var<uniform> settings: BlurSettings;
 
-// TODO use gaussian blur instead of box blur
-
-fn get_sample_uv(uv: vec2<f32>) -> vec2<f32> {
-    return settings.viewport.xy + uv * settings.viewport.zw;
-}
-
 fn sample_stencil(uv: vec2<f32>, offset: vec2<f32>) -> vec4<f32> {
     return textureSample(input_texture, stencil_sampler, uv + offset * settings.dims);
 }
@@ -24,7 +18,7 @@ fn sample_stencil(uv: vec2<f32>, offset: vec2<f32>) -> vec4<f32> {
 // TODO this should be done in a separate pass to avoid doing a bunch of work
 fn max_filter(uv: vec2<f32>) -> vec4<f32>{
     var col = vec4(0.0);
-    let size = i32(2.0);
+    let size = i32(settings.size);
     for (var x = -size; x <= size; x++) {
         for (var y = -size; y <= size; y++) {
             let offset = vec2(f32(x), f32(y));
@@ -66,14 +60,19 @@ fn box_blur(uv: vec2<f32>, direction: vec2<f32>) -> vec4<f32>{
 }
 
 @fragment
-fn vertical_blur(@location(0) uv: vec2<f32>) -> @location(0) vec4<f32> {
-    let sample_uv = get_sample_uv(uv);
-    return box_blur(sample_uv, vec2(0.0, 1.0));
-}
+fn fragment(@location(0) uv: vec2<f32>) -> @location(0) vec4<f32> {
+    let sample_uv = settings.viewport.xy + uv * settings.viewport.zw;
 
-@fragment
-fn horizontal_blur(@location(0) uv: vec2<f32>) -> @location(0) vec4<f32> {
-    let sample_uv = get_sample_uv(uv);
-    return box_blur(sample_uv, vec2(1.0, 0.0));
+    #ifdef HORIZONTAL
+    let direction = vec2(1.0, 0.0);
+    #else // HORIZONTAL
+    let direction = vec2(0.0, 1.0);
+    #endif // HORIZONTAL
+
+    #ifdef GAUSSIAN_BLUR
+    return gaussian_blur(sample_uv, direction);
+    #else // GAUSSIAN_BLUR
+    return box_blur(sample_uv, direction);
+    #endif // GAUSSIAN_BLUR
 }
 
