@@ -2,19 +2,12 @@
 
 use std::f32::consts::PI;
 
-use bevy::{prelude::*, window::PresentMode};
+use bevy::prelude::*;
 use bevy_outline::{Outline, OutlinePlugin, OutlineSettings};
 
 fn main() {
     App::new()
-        .insert_resource(Msaa { samples: 1 })
-        .add_plugins(DefaultPlugins.set(WindowPlugin {
-            window: WindowDescriptor {
-                present_mode: PresentMode::AutoNoVsync,
-                ..default()
-            },
-            ..default()
-        }))
+        .add_plugins(DefaultPlugins)
         .add_plugin(OutlinePlugin)
         .insert_resource(AmbientLight {
             color: Color::WHITE,
@@ -22,7 +15,6 @@ fn main() {
         })
         .add_startup_system(setup)
         .add_system(setup_scene_once_loaded)
-        .add_system(update_outline)
         .run();
 }
 
@@ -53,8 +45,8 @@ fn setup(
             ..default()
         },
         OutlineSettings {
-            size: 6.0,
-            intensity: 64.0,
+            size: 16.0,
+            intensity: 1.75,
         },
     ));
 
@@ -102,19 +94,10 @@ fn setup_scene_once_loaded(
     };
 
     for e in &mesh {
-        commands.entity(e).insert(Outline {
-            color: Color::BLACK,
-        });
+        commands.entity(e).insert(Outline { color: Color::RED });
     }
 
     player.play(animations.0[0].clone_weak()).repeat();
 
     *done = true;
-}
-
-fn update_outline(mut q: Query<&mut OutlineSettings>, time: Res<Time>) {
-    for mut settings in &mut q {
-        settings.size = (time.elapsed_seconds_wrapped().sin() * 0.5 + 0.5) * 50.0;
-        settings.intensity = settings.size * 1.5;
-    }
 }
