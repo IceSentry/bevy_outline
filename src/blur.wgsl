@@ -39,12 +39,14 @@ var<private> GAUSSIAN_WEIGHTS: array<f32, 3> = array<f32, 3>(
     0.0702702703
 );
 
-// Technique from https://www.rastergrid.com/blog/2010/09/efficient-gaussian-blur-with-linear-sampling/
+// based on https://www.rastergrid.com/blog/2010/09/efficient-gaussian-blur-with-linear-sampling/
 fn gaussian_blur(uv: vec2<f32>, direction: vec2<f32>) -> vec4<f32>{
     var sum = sample_stencil(uv, vec2(0.0)) * GAUSSIAN_WEIGHTS[0];
+    let size = settings.size;
     for (var i = 1; i < 3; i++) {
-        sum += sample_stencil(uv , vec2(OFFSETS[i]) * settings.size * direction) * GAUSSIAN_WEIGHTS[i];
-        sum += sample_stencil(uv , -vec2(OFFSETS[i]) * settings.size * direction) * GAUSSIAN_WEIGHTS[i];
+        let offset  = vec2(OFFSETS[i]) * size * direction;
+        sum += sample_stencil(uv , offset) * GAUSSIAN_WEIGHTS[i];
+        sum += sample_stencil(uv , -offset) * GAUSSIAN_WEIGHTS[i];
     }
     return sum;
 }

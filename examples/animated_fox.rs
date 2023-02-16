@@ -3,7 +3,7 @@
 use std::f32::consts::PI;
 
 use bevy::prelude::*;
-use bevy_outline::{Outline, OutlinePlugin, OutlineSettings};
+use bevy_outline::{Outline, OutlinePlugin, OutlineSettings, OutlineType};
 
 fn main() {
     App::new()
@@ -45,9 +45,9 @@ fn setup(
             ..default()
         },
         OutlineSettings {
-            size: 16.0,
+            size: 3.0,
             intensity: 1.75,
-            ..default()
+            outline_type: OutlineType::GaussianBlur,
         },
     ));
 
