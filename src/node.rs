@@ -16,8 +16,8 @@ use bevy::{
 
 use crate::{
     bind_group_entries, blur_pipeline::BlurPipeline, stencil_phase::MeshStencil, BlurPipelines,
-    BlurUniform, BlurredOutlineTextures, CombineSettingsUniform, OutlineSettings, OutlineType,
-    StencilTexture,
+    BlurUniform, BlurredOutlineTextures, CombineSettingsUniform, MaxFilterSettingsUniform,
+    OutlineSettings, OutlineType, StencilTexture,
 };
 
 use super::OutlineMeta;
@@ -31,7 +31,8 @@ pub struct OutlineNode {
         &'static StencilTexture,
         &'static DynamicUniformIndex<BlurUniform>,
         &'static DynamicUniformIndex<CombineSettingsUniform>,
-        &'static BlurPipelines,
+        &'static DynamicUniformIndex<MaxFilterSettingsUniform>,
+        Option<&'static BlurPipelines>,
         &'static OutlineSettings,
     )>,
 }
@@ -69,6 +70,7 @@ impl Node for OutlineNode {
             stencil_texture,
             blur_uniform_index,
             intensity_uniform_index,
+            max_filter_settings_uniform_index,
             blur_pipelines,
             settings,
         )) = self.query.get_manual(world, view_entity) else {
@@ -85,11 +87,13 @@ impl Node for OutlineNode {
         let Some(combine_settings_uniforms) = world.resource::<ComponentUniforms<CombineSettingsUniform>>().binding() else {
             return Ok(());
         };
+        let Some(max_filter_settings_uniforms) = world.resource::<ComponentUniforms<MaxFilterSettingsUniform>>().binding() else {
+            return Ok(());
+        };
 
-        let (Some(vertical_blur_pipeline), Some(horizontal_blur_pipeline), Some(combine_pipeline)) = (
-            pipeline_cache.get_render_pipeline(blur_pipelines.vertical_blur_pipeline_id),
-            pipeline_cache.get_render_pipeline(blur_pipelines.horizontal_blur_pipeline_id),
-            pipeline_cache.get_render_pipeline(pipelines.combine_pipeline)
+        let (Some(combine_pipeline), Some(max_filter_pipeline)) = (
+            pipeline_cache.get_render_pipeline(pipelines.combine_pipeline),
+            pipeline_cache.get_render_pipeline(pipelines.max_filter_pipeline)
         ) else {
             return Ok(());
         };
@@ -109,65 +113,98 @@ impl Node for OutlineNode {
             view_entity,
         );
 
-        // blur
-        {
-            // TODO since only the texture changes, we should have a separate bind group for it
-            // This means we could also reuse parts of it for both direction
-            let blur_bind_group = |label, texture: &CachedTexture| {
-                render_device.create_bind_group(&BindGroupDescriptor {
-                    label: Some(&format!("{label}_bind_group")),
-                    layout: &blur_pipeline.layout,
-                    entries: &bind_group_entries![
-                        0 => BindingResource::TextureView(&texture.default_view),
-                        1 => BindingResource::Sampler(&pipelines.sampler),
-                        2 => blur_uniforms.clone(),
-                    ],
-                })
-            };
+        // TODO figure out how to downsample
 
-            blur_pass(
-                render_context,
-                vertical_blur_pipeline,
-                blur_bind_group("vertical_blur", &stencil_texture.0),
-                blur_uniform_index,
-                &blur_textures.vertical_blur_texture,
-            );
+        match settings.outline_type {
+            OutlineType::BoxBlur | OutlineType::GaussianBlur => {
+                let Some(blur_pipelines) = blur_pipelines else {
+                    return Ok(());
+                };
 
-            let horizontal_bind_group =
-                blur_bind_group("horizontal_blur", &blur_textures.vertical_blur_texture);
-            blur_pass(
-                render_context,
-                horizontal_blur_pipeline,
-                horizontal_bind_group.clone(),
-                blur_uniform_index,
-                &blur_textures.horizontal_blur_texture,
-            );
+                let (Some(vertical_blur_pipeline), Some(horizontal_blur_pipeline)) = (
+                    pipeline_cache.get_render_pipeline(blur_pipelines.vertical_blur_pipeline_id),
+                    pipeline_cache.get_render_pipeline(blur_pipelines.horizontal_blur_pipeline_id),
+                ) else {
+                    return Ok(());
+                };
 
-            if let OutlineType::GaussianBlur = settings.outline_type {
-                // This essentially re-runs the blur on the already blurred texture.
-                // This makes it possible to have wider outlines.
-                // Using only a single step generates a lot of artifacts when using large sizes.
+                // TODO since only the texture changes, we should have a separate bind group for it
+                // This means we could also reuse parts of it for both direction
+                let blur_bind_group = |label, texture: &CachedTexture| {
+                    render_device.create_bind_group(&BindGroupDescriptor {
+                        label: Some(&format!("{label}_bind_group")),
+                        layout: &blur_pipeline.layout,
+                        entries: &bind_group_entries![
+                            0 => BindingResource::TextureView(&texture.default_view),
+                            1 => BindingResource::Sampler(&pipelines.sampler),
+                            2 => blur_uniforms.clone(),
+                        ],
+                    })
+                };
 
-                let vertical_bind_group =
-                    blur_bind_group("vertical_blur", &blur_textures.horizontal_blur_texture);
+                blur_pass(
+                    render_context,
+                    vertical_blur_pipeline,
+                    blur_bind_group("vertical_blur", &stencil_texture.0),
+                    blur_uniform_index,
+                    &blur_textures.vertical_blur_texture,
+                );
 
-                for _ in 0..3 {
-                    blur_pass(
-                        render_context,
-                        vertical_blur_pipeline,
-                        vertical_bind_group.clone(),
-                        blur_uniform_index,
-                        &blur_textures.vertical_blur_texture,
-                    );
-                    blur_pass(
-                        render_context,
-                        horizontal_blur_pipeline,
-                        horizontal_bind_group.clone(),
-                        blur_uniform_index,
-                        &blur_textures.horizontal_blur_texture,
-                    );
+                let horizontal_bind_group =
+                    blur_bind_group("horizontal_blur", &blur_textures.vertical_blur_texture);
+                blur_pass(
+                    render_context,
+                    horizontal_blur_pipeline,
+                    horizontal_bind_group.clone(),
+                    blur_uniform_index,
+                    &blur_textures.horizontal_blur_texture,
+                );
+
+                if let OutlineType::GaussianBlur = settings.outline_type {
+                    // This essentially re-runs the blur on the already blurred texture.
+                    // This makes it possible to have wider outlines.
+                    // Using only a single step generates a lot of artifacts when using large sizes.
+
+                    let vertical_bind_group =
+                        blur_bind_group("vertical_blur", &blur_textures.horizontal_blur_texture);
+
+                    for _ in 0..3 {
+                        blur_pass(
+                            render_context,
+                            vertical_blur_pipeline,
+                            vertical_bind_group.clone(),
+                            blur_uniform_index,
+                            &blur_textures.vertical_blur_texture,
+                        );
+                        blur_pass(
+                            render_context,
+                            horizontal_blur_pipeline,
+                            horizontal_bind_group.clone(),
+                            blur_uniform_index,
+                            &blur_textures.horizontal_blur_texture,
+                        );
+                    }
                 }
             }
+            OutlineType::MaxFilter => {
+                let max_filter_bind_group = render_device.create_bind_group(&BindGroupDescriptor {
+                    label: Some("max_filter_bind_group"),
+                    layout: &pipelines.max_filter_bind_group_layout,
+                    entries: &bind_group_entries![
+                        0 => BindingResource::TextureView(&stencil_texture.0.default_view),
+                        1 => BindingResource::Sampler(&pipelines.sampler),
+                        2 => max_filter_settings_uniforms.clone(),
+                    ],
+                });
+                max_filter_pass(
+                    render_context,
+                    &blur_textures.horizontal_blur_texture,
+                    max_filter_pipeline,
+                    max_filter_bind_group,
+                    max_filter_settings_uniform_index,
+                );
+            }
+            OutlineType::Jfa => todo!(),
         }
 
         // final combine pass
@@ -181,7 +218,7 @@ impl Node for OutlineNode {
                 3 => combine_settings_uniforms.clone(),
             ],
         });
-        combine_textures(
+        combine_pass(
             render_context,
             combine_pipeline,
             combine_bind_group,
@@ -193,6 +230,37 @@ impl Node for OutlineNode {
     }
 }
 
+fn max_filter_pass(
+    render_context: &mut RenderContext,
+    texture: &CachedTexture,
+    max_filter_pipeline: &RenderPipeline,
+    max_filter_bind_group: BindGroup,
+    max_filter_settings_uniform_index: &DynamicUniformIndex<MaxFilterSettingsUniform>,
+) {
+    let mut pass = TrackedRenderPass::new(render_context.command_encoder.begin_render_pass(
+        &RenderPassDescriptor {
+            label: Some("max_filter_pass"),
+            color_attachments: &[Some(RenderPassColorAttachment {
+                view: &texture.default_view,
+                resolve_target: None,
+                ops: Operations {
+                    load: LoadOp::Clear(Color::NONE.into()),
+                    store: true,
+                },
+            })],
+            depth_stencil_attachment: None,
+        },
+    ));
+
+    pass.set_render_pipeline(max_filter_pipeline);
+    pass.set_bind_group(
+        0,
+        &max_filter_bind_group,
+        &[max_filter_settings_uniform_index.index()],
+    );
+    pass.draw(0..3, 0..1);
+}
+
 fn draw_stencil(
     stencil_texture: &StencilTexture,
     render_context: &mut RenderContext,
@@ -200,27 +268,27 @@ fn draw_stencil(
     stencil_phase: &RenderPhase<MeshStencil>,
     view_entity: Entity,
 ) {
-    let pass_desc = RenderPassDescriptor {
-        label: Some("outline_stencil_pass"),
-        color_attachments: &[Some(RenderPassColorAttachment {
-            view: &stencil_texture.0.default_view,
-            resolve_target: None,
-            ops: Operations {
-                load: LoadOp::Clear(Color::NONE.into()),
-                store: true,
-            },
-        })],
-        depth_stencil_attachment: None,
-    };
-    let mut stencil_pass =
-        TrackedRenderPass::new(render_context.command_encoder.begin_render_pass(&pass_desc));
+    let mut pass = TrackedRenderPass::new(render_context.command_encoder.begin_render_pass(
+        &RenderPassDescriptor {
+            label: Some("outline_stencil_pass"),
+            color_attachments: &[Some(RenderPassColorAttachment {
+                view: &stencil_texture.0.default_view,
+                resolve_target: None,
+                ops: Operations {
+                    load: LoadOp::Clear(Color::NONE.into()),
+                    store: true,
+                },
+            })],
+            depth_stencil_attachment: None,
+        },
+    ));
 
     let draw_functions = world.resource::<DrawFunctions<MeshStencil>>();
     let mut draw_functions = draw_functions.write();
     for item in &stencil_phase.items {
         draw_functions.get_mut(item.draw_function()).unwrap().draw(
             world,
-            &mut stencil_pass,
+            &mut pass,
             view_entity,
             item,
         );
@@ -234,47 +302,47 @@ fn blur_pass(
     blur_uniform_index: &DynamicUniformIndex<BlurUniform>,
     texture: &CachedTexture,
 ) {
-    let pass_desc = RenderPassDescriptor {
-        label: Some("outline_blur_pass"),
-        color_attachments: &[Some(RenderPassColorAttachment {
-            view: &texture.default_view,
-            resolve_target: None,
-            ops: Operations {
-                load: LoadOp::Clear(Color::NONE.into()),
-                store: true,
-            },
-        })],
-        depth_stencil_attachment: None,
-    };
-    let mut blur_pass =
-        TrackedRenderPass::new(render_context.command_encoder.begin_render_pass(&pass_desc));
+    let mut blur_pass = TrackedRenderPass::new(render_context.command_encoder.begin_render_pass(
+        &RenderPassDescriptor {
+            label: Some("outline_blur_pass"),
+            color_attachments: &[Some(RenderPassColorAttachment {
+                view: &texture.default_view,
+                resolve_target: None,
+                ops: Operations {
+                    load: LoadOp::Clear(Color::NONE.into()),
+                    store: true,
+                },
+            })],
+            depth_stencil_attachment: None,
+        },
+    ));
 
     blur_pass.set_render_pipeline(pipeline);
     blur_pass.set_bind_group(0, &bind_group, &[blur_uniform_index.index()]);
     blur_pass.draw(0..3, 0..1);
 }
 
-fn combine_textures(
+fn combine_pass(
     render_context: &mut RenderContext,
     pipeline: &RenderPipeline,
     bind_group: BindGroup,
     view_target: &ViewTarget,
     intensity_uniform_index: &DynamicUniformIndex<CombineSettingsUniform>,
 ) {
-    let pass_desc = RenderPassDescriptor {
-        label: Some("outline_combine_pass"),
-        color_attachments: &[Some(view_target.get_unsampled_color_attachment(
-            Operations {
-                load: LoadOp::Load,
-                store: true,
-            },
-        ))],
-        depth_stencil_attachment: None,
-    };
-    let mut combine_pass =
-        TrackedRenderPass::new(render_context.command_encoder.begin_render_pass(&pass_desc));
+    let mut pass = TrackedRenderPass::new(render_context.command_encoder.begin_render_pass(
+        &RenderPassDescriptor {
+            label: Some("outline_combine_pass"),
+            color_attachments: &[Some(view_target.get_unsampled_color_attachment(
+                Operations {
+                    load: LoadOp::Load,
+                    store: true,
+                },
+            ))],
+            depth_stencil_attachment: None,
+        },
+    ));
 
-    combine_pass.set_render_pipeline(pipeline);
-    combine_pass.set_bind_group(0, &bind_group, &[intensity_uniform_index.index()]);
-    combine_pass.draw(0..3, 0..1);
+    pass.set_render_pipeline(pipeline);
+    pass.set_bind_group(0, &bind_group, &[intensity_uniform_index.index()]);
+    pass.draw(0..3, 0..1);
 }

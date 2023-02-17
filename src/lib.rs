@@ -38,6 +38,9 @@ const BLUR_SHADER_HANDLE: HandleUntyped =
 const COMBINE_SHADER_HANDLE: HandleUntyped =
     HandleUntyped::weak_from_u64(Shader::TYPE_UUID, 13593741836324854485);
 
+const MAX_FILTER_SHADER_HANDLE: HandleUntyped =
+    HandleUntyped::weak_from_u64(Shader::TYPE_UUID, 3759434788503552836);
+
 #[derive(Component, Clone, Copy, Default)]
 pub struct Outline {
     pub color: Color,
@@ -73,11 +76,18 @@ impl Plugin for OutlinePlugin {
             "combine.wgsl",
             Shader::from_wgsl
         );
+        load_internal_asset!(
+            app,
+            MAX_FILTER_SHADER_HANDLE,
+            "max_filter.wgsl",
+            Shader::from_wgsl
+        );
 
         app.add_plugin(ExtractComponentPlugin::<Outline>::default())
             .add_plugin(ExtractComponentPlugin::<OutlineSettings>::default())
             .add_plugin(UniformComponentPlugin::<BlurUniform>::default())
             .add_plugin(UniformComponentPlugin::<CombineSettingsUniform>::default())
+            .add_plugin(UniformComponentPlugin::<MaxFilterSettingsUniform>::default())
             .add_plugin(MeshStencilPlugin);
 
         let Ok(render_app) = app.get_sub_app_mut(RenderApp) else {
@@ -129,6 +139,16 @@ impl Default for OutlineType {
     }
 }
 
+// impl OutlineType {
+//     fn is_blur(&self) -> bool {
+//         match self {
+//             OutlineType::BoxBlur | OutlineType::GaussianBlur => true,
+//             OutlineType::MaxFilter => false,
+//             OutlineType::Jfa => false,
+//         }
+//     }
+// }
+
 #[derive(Component, Clone, Copy, Debug, Default)]
 pub struct OutlineSettings {
     // The size or thickness of the outline, higher numbers will create wider outlines
@@ -152,6 +172,13 @@ struct CombineSettingsUniform {
     intensity: f32,
 }
 
+#[derive(Component, ShaderType, Clone)]
+struct MaxFilterSettingsUniform {
+    size: f32,
+    dims: Vec2,
+    viewport: Vec4,
+}
+
 #[derive(Component)]
 pub struct StencilTexture(CachedTexture);
 
@@ -164,6 +191,8 @@ struct BlurredOutlineTextures {
 #[derive(Resource)]
 struct OutlineMeta {
     sampler: Sampler,
+    max_filter_bind_group_layout: BindGroupLayout,
+    max_filter_pipeline: CachedRenderPipelineId,
     combine_bind_group_layout: BindGroupLayout,
     combine_pipeline: CachedRenderPipelineId,
 }
@@ -184,6 +213,23 @@ impl FromWorld for OutlineMeta {
             view_dimension: TextureViewDimension::D2,
             multisampled: false,
         };
+
+        let max_filter_bind_group_layout =
+            render_device.create_bind_group_layout(&BindGroupLayoutDescriptor {
+                label: Some("max_filter_bind_group_layout"),
+                entries: &bind_group_layout_entries![
+                    // input texture
+                    0 => texture,
+                    // sampler
+                    1 => BindingType::Sampler(SamplerBindingType::Filtering),
+                    // uniform
+                    2 => BindingType::Buffer {
+                        ty: BufferBindingType::Uniform,
+                        has_dynamic_offset: true,
+                        min_binding_size: Some(MaxFilterSettingsUniform::min_size()),
+                    },
+                ],
+            });
 
         let combine_bind_group_layout =
             render_device.create_bind_group_layout(&BindGroupLayoutDescriptor {
@@ -206,6 +252,19 @@ impl FromWorld for OutlineMeta {
 
         let mut pipeline_cache = world.resource_mut::<PipelineCache>();
 
+        let max_filter_pipeline = pipeline_cache.queue_render_pipeline(
+            RenderPipelineDescriptorBuilder::fullscreen()
+                .label("max_filter_pipeline")
+                .fragment(
+                    MAX_FILTER_SHADER_HANDLE,
+                    "fragment",
+                    &[color_target(None)],
+                    &[],
+                )
+                .layout(vec![max_filter_bind_group_layout.clone()])
+                .build(),
+        );
+
         let combine_pipeline = pipeline_cache.queue_render_pipeline(
             RenderPipelineDescriptorBuilder::fullscreen()
                 .label("combine_pipeline")
@@ -222,6 +281,8 @@ impl FromWorld for OutlineMeta {
 
         Self {
             sampler,
+            max_filter_bind_group_layout,
+            max_filter_pipeline,
             combine_bind_group_layout,
             combine_pipeline,
         }
@@ -238,17 +299,26 @@ fn extract_outline_settings(
             camera.physical_viewport_size(),
             camera.physical_target_size(),
         ) {
+            let viewport = UVec4::new(origin.x, origin.y, size.x, size.y).as_vec4()
+                / UVec4::new(target_size.x, target_size.y, target_size.x, target_size.y).as_vec4();
             commands
                 .get_or_spawn(entity)
                 .insert(BlurUniform {
                     size: settings.size,
                     dims: Vec2::ONE / size.as_vec2(),
-                    viewport: UVec4::new(origin.x, origin.y, size.x, size.y).as_vec4()
-                        / UVec4::new(target_size.x, target_size.y, target_size.x, target_size.y)
-                            .as_vec4(),
+                    viewport,
                 })
                 .insert(CombineSettingsUniform {
                     intensity: settings.intensity,
+                })
+                .insert(MaxFilterSettingsUniform {
+                    size: match settings.outline_type {
+                        OutlineType::BoxBlur | OutlineType::GaussianBlur => settings.size / 2.0,
+                        OutlineType::MaxFilter => settings.size,
+                        OutlineType::Jfa => 0.0,
+                    },
+                    dims: Vec2::ONE / size.as_vec2(),
+                    viewport,
                 })
                 .insert(*settings);
         }
@@ -358,7 +428,27 @@ fn prepare_outline_textures(
                     horizontal_blur_texture,
                 });
             }
-            OutlineType::MaxFilter => todo!(),
+            OutlineType::MaxFilter => {
+                let vertical_blur_texture = texture_cache.get(
+                    &render_device,
+                    TextureDescriptor {
+                        label: Some("vertical_blur_output"),
+                        ..base_desc
+                    },
+                );
+                let horizontal_blur_texture = texture_cache.get(
+                    &render_device,
+                    TextureDescriptor {
+                        label: Some("horizontal_blur_output"),
+                        ..base_desc
+                    },
+                );
+
+                entity_commands.insert(BlurredOutlineTextures {
+                    vertical_blur_texture,
+                    horizontal_blur_texture,
+                });
+            }
             OutlineType::Jfa => todo!(),
         }
     }
