@@ -167,6 +167,7 @@ impl ExtractComponent for OutlineSettings {
         *item
     }
 }
+
 #[derive(Component, ShaderType, Clone)]
 struct CombineSettingsUniform {
     intensity: f32,

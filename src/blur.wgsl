@@ -15,18 +15,52 @@ fn sample_stencil(uv: vec2<f32>, offset: vec2<f32>) -> vec4<f32> {
     return textureSample(input_texture, stencil_sampler, uv + offset * settings.dims);
 }
 
-// TODO this should be done in a separate pass to avoid doing a bunch of work
-fn max_filter(uv: vec2<f32>) -> vec4<f32>{
-    var col = vec4(0.0);
-    let size = i32(settings.size);
-    for (var x = -size; x <= size; x++) {
-        for (var y = -size; y <= size; y++) {
-            let offset = vec2(f32(x), f32(y));
-            col = max(col, sample_stencil(uv, offset));
-        }
-    }
-    return col;
+var<private> OFFSETS_5: array<f32, 1> = array<f32, 1>(
+    1.3333333333333333,
+);
+var<private> GAUSSIAN_WEIGHTS_5: array<f32, 3> = array<f32, 3>(
+    0.29411764705882354,
+    0.35294117647058826,
+    0.35294117647058826
+);
+
+fn blur5(uv: vec2<f32>, direction: vec2<f32>) -> vec4<f32>{
+    let offset = vec2(1.3333333333333333) * direction;
+    var color = vec4(0.0);
+    color += sample_stencil(uv, vec2(0.0)) * 0.29411764705882354;
+    color += sample_stencil(uv, offset) * 0.35294117647058826;
+    color += sample_stencil(uv, -offset) * 0.35294117647058826;
+    return color;
 }
+
+fn blur9(uv: vec2<f32>, direction: vec2<f32>) -> vec4<f32>{
+    let offset1 = vec2(1.3846153846) * direction;
+    let offset2 = vec2(3.2307692308) * direction;
+    var color = vec4(0.0);
+    color += sample_stencil(uv, vec2(0.0)) * 0.2270270270;
+    color += sample_stencil(uv, offset1) *  0.3162162162;
+    color += sample_stencil(uv, -offset1) *  0.3162162162;
+    color += sample_stencil(uv, offset2) * 0.0702702703;
+    color += sample_stencil(uv, -offset2) * 0.0702702703;
+    return color;
+}
+
+fn blur13(uv: vec2<f32>, direction: vec2<f32>) -> vec4<f32>{
+    let offset1 = vec2(1.411764705882353) * direction;
+    let offset2 = vec2(3.2941176470588234) * direction;
+    let offset3 = vec2(5.176470588235294) * direction;
+
+    var color = vec4(0.0);
+    color += sample_stencil(uv, vec2(0.0)) * 0.1964825501511404;
+    color += sample_stencil(uv, offset1) *  0.2969069646728344;
+    color += sample_stencil(uv, -offset1) *  0.2969069646728344;
+    color += sample_stencil(uv, offset2) * 0.09447039785044732;
+    color += sample_stencil(uv, -offset2) * 0.09447039785044732;
+    color += sample_stencil(uv, offset3) * 0.010381362401148057;
+    color += sample_stencil(uv, -offset3) * 0.010381362401148057;
+    return color;
+}
+
 
 var<private> OFFSETS: array<f32, 3> = array<f32, 3>(
     0.0,
@@ -73,6 +107,7 @@ fn fragment(@location(0) uv: vec2<f32>) -> @location(0) vec4<f32> {
 
     #ifdef GAUSSIAN_BLUR
     return gaussian_blur(sample_uv, direction);
+    // return blur13(sample_uv, direction * settings.size);
     #else // GAUSSIAN_BLUR
     return box_blur(sample_uv, direction);
     #endif // GAUSSIAN_BLUR

@@ -20,5 +20,7 @@ fn combine(@location(0) uv: vec2<f32>) -> @location(0) vec4<f32> {
     }
 
     let outline = blur_color - stencil_color;
+
+    // return step(vec4(0.01), outline);
     return outline * intensity;
 }

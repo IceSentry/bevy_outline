@@ -45,9 +45,9 @@ fn setup(
             ..default()
         },
         OutlineSettings {
-            size: 2.0,
-            intensity: 1.25,
-            outline_type: OutlineType::GaussianBlur,
+            size: 32.0,
+            intensity: 1.5,
+            outline_type: OutlineType::BoxBlur,
         },
     ));
 
