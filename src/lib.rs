@@ -125,18 +125,13 @@ impl Plugin for OutlinePlugin {
     }
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Default)]
 pub enum OutlineType {
+    #[default]
     BoxBlur,
     GaussianBlur,
     MaxFilter,
     Jfa,
-}
-
-impl Default for OutlineType {
-    fn default() -> Self {
-        OutlineType::BoxBlur
-    }
 }
 
 // impl OutlineType {
