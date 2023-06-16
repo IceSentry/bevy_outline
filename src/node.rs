@@ -3,7 +3,7 @@ use bevy::{
     render::{
         extract_component::{ComponentUniforms, DynamicUniformIndex},
         render_graph::{Node, RenderGraphContext, SlotInfo, SlotType},
-        render_phase::{DrawFunctions, PhaseItem, RenderPhase, TrackedRenderPass},
+        render_phase::RenderPhase,
         render_resource::{
             BindGroup, BindGroupDescriptor, BindingResource, LoadOp, Operations, PipelineCache,
             RenderPassColorAttachment, RenderPassDescriptor, RenderPipeline,
@@ -237,20 +237,18 @@ fn max_filter_pass(
     max_filter_bind_group: BindGroup,
     max_filter_settings_uniform_index: &DynamicUniformIndex<MaxFilterSettingsUniform>,
 ) {
-    let mut pass = TrackedRenderPass::new(render_context.command_encoder.begin_render_pass(
-        &RenderPassDescriptor {
-            label: Some("max_filter_pass"),
-            color_attachments: &[Some(RenderPassColorAttachment {
-                view: &texture.default_view,
-                resolve_target: None,
-                ops: Operations {
-                    load: LoadOp::Clear(Color::NONE.into()),
-                    store: true,
-                },
-            })],
-            depth_stencil_attachment: None,
-        },
-    ));
+    let mut pass = render_context.begin_tracked_render_pass(RenderPassDescriptor {
+        label: Some("max_filter_pass"),
+        color_attachments: &[Some(RenderPassColorAttachment {
+            view: &texture.default_view,
+            resolve_target: None,
+            ops: Operations {
+                load: LoadOp::Clear(Color::NONE.into()),
+                store: true,
+            },
+        })],
+        depth_stencil_attachment: None,
+    });
 
     pass.set_render_pipeline(max_filter_pipeline);
     pass.set_bind_group(
@@ -268,31 +266,19 @@ fn draw_stencil(
     stencil_phase: &RenderPhase<MeshStencil>,
     view_entity: Entity,
 ) {
-    let mut pass = TrackedRenderPass::new(render_context.command_encoder.begin_render_pass(
-        &RenderPassDescriptor {
-            label: Some("outline_stencil_pass"),
-            color_attachments: &[Some(RenderPassColorAttachment {
-                view: &stencil_texture.0.default_view,
-                resolve_target: None,
-                ops: Operations {
-                    load: LoadOp::Clear(Color::NONE.into()),
-                    store: true,
-                },
-            })],
-            depth_stencil_attachment: None,
-        },
-    ));
-
-    let draw_functions = world.resource::<DrawFunctions<MeshStencil>>();
-    let mut draw_functions = draw_functions.write();
-    for item in &stencil_phase.items {
-        draw_functions.get_mut(item.draw_function()).unwrap().draw(
-            world,
-            &mut pass,
-            view_entity,
-            item,
-        );
-    }
+    let mut pass = render_context.begin_tracked_render_pass(RenderPassDescriptor {
+        label: Some("outline_stencil_pass"),
+        color_attachments: &[Some(RenderPassColorAttachment {
+            view: &stencil_texture.0.default_view,
+            resolve_target: None,
+            ops: Operations {
+                load: LoadOp::Clear(Color::NONE.into()),
+                store: true,
+            },
+        })],
+        depth_stencil_attachment: None,
+    });
+    stencil_phase.render(&mut pass, world, view_entity);
 }
 
 fn blur_pass(
@@ -302,20 +288,18 @@ fn blur_pass(
     blur_uniform_index: &DynamicUniformIndex<BlurUniform>,
     texture: &CachedTexture,
 ) {
-    let mut blur_pass = TrackedRenderPass::new(render_context.command_encoder.begin_render_pass(
-        &RenderPassDescriptor {
-            label: Some("outline_blur_pass"),
-            color_attachments: &[Some(RenderPassColorAttachment {
-                view: &texture.default_view,
-                resolve_target: None,
-                ops: Operations {
-                    load: LoadOp::Clear(Color::NONE.into()),
-                    store: true,
-                },
-            })],
-            depth_stencil_attachment: None,
-        },
-    ));
+    let mut blur_pass = render_context.begin_tracked_render_pass(RenderPassDescriptor {
+        label: Some("outline_blur_pass"),
+        color_attachments: &[Some(RenderPassColorAttachment {
+            view: &texture.default_view,
+            resolve_target: None,
+            ops: Operations {
+                load: LoadOp::Clear(Color::NONE.into()),
+                store: true,
+            },
+        })],
+        depth_stencil_attachment: None,
+    });
 
     blur_pass.set_render_pipeline(pipeline);
     blur_pass.set_bind_group(0, &bind_group, &[blur_uniform_index.index()]);
@@ -329,18 +313,16 @@ fn combine_pass(
     view_target: &ViewTarget,
     intensity_uniform_index: &DynamicUniformIndex<CombineSettingsUniform>,
 ) {
-    let mut pass = TrackedRenderPass::new(render_context.command_encoder.begin_render_pass(
-        &RenderPassDescriptor {
-            label: Some("outline_combine_pass"),
-            color_attachments: &[Some(view_target.get_unsampled_color_attachment(
-                Operations {
-                    load: LoadOp::Load,
-                    store: true,
-                },
-            ))],
-            depth_stencil_attachment: None,
-        },
-    ));
+    let mut pass = render_context.begin_tracked_render_pass(RenderPassDescriptor {
+        label: Some("outline_combine_pass"),
+        color_attachments: &[Some(view_target.get_unsampled_color_attachment(
+            Operations {
+                load: LoadOp::Load,
+                store: true,
+            },
+        ))],
+        depth_stencil_attachment: None,
+    });
 
     pass.set_render_pipeline(pipeline);
     pass.set_bind_group(0, &bind_group, &[intensity_uniform_index.index()]);

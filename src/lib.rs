@@ -24,7 +24,7 @@ use bevy::{
         },
         renderer::RenderDevice,
         texture::{BevyDefault, CachedTexture, TextureCache},
-        Extract, RenderApp, RenderStage,
+        Extract, RenderApp, RenderSet,
     },
 };
 use blur_pipeline::{BlurDirection, BlurPipeline, BlurPipelineKey, BlurType};
@@ -41,19 +41,9 @@ const COMBINE_SHADER_HANDLE: HandleUntyped =
 const MAX_FILTER_SHADER_HANDLE: HandleUntyped =
     HandleUntyped::weak_from_u64(Shader::TYPE_UUID, 3759434788503552836);
 
-#[derive(Component, Clone, Copy, Default)]
+#[derive(Component, Clone, Copy, Default, ExtractComponent)]
 pub struct Outline {
     pub color: Color,
-}
-
-impl ExtractComponent for Outline {
-    type Query = &'static Self;
-
-    type Filter = ();
-
-    fn extract_component(item: bevy::ecs::query::QueryItem<Self::Query>) -> Self {
-        *item
-    }
 }
 
 pub mod graph {
@@ -98,9 +88,9 @@ impl Plugin for OutlinePlugin {
             .init_resource::<BlurPipeline>()
             .init_resource::<SpecializedRenderPipelines<BlurPipeline>>()
             .init_resource::<OutlineMeta>()
-            .add_system_to_stage(RenderStage::Extract, extract_outline_settings)
-            .add_system_to_stage(RenderStage::Prepare, prepare_outline_textures)
-            .add_system_to_stage(RenderStage::Prepare, prepare_blur_pipelines);
+            .add_system(extract_outline_settings.in_schedule(ExtractSchedule))
+            .add_system(prepare_outline_textures.in_set(RenderSet::Prepare))
+            .add_system(prepare_blur_pipelines.in_set(RenderSet::Prepare));
 
         {
             let outline_node = OutlineNode::new(&mut render_app.world);
@@ -109,18 +99,14 @@ impl Plugin for OutlinePlugin {
 
             draw_3d_graph.add_node(graph::node::OUTLINE_PASS, outline_node);
 
-            draw_3d_graph
-                .add_slot_edge(
-                    draw_3d_graph.input_node().unwrap().id,
-                    graph::input::VIEW_ENTITY,
-                    graph::node::OUTLINE_PASS,
-                    OutlineNode::IN_VIEW,
-                )
-                .unwrap();
+            draw_3d_graph.add_slot_edge(
+                draw_3d_graph.input_node().id,
+                graph::input::VIEW_ENTITY,
+                graph::node::OUTLINE_PASS,
+                OutlineNode::IN_VIEW,
+            );
 
-            draw_3d_graph
-                .add_node_edge(core_3d::graph::node::MAIN_PASS, graph::node::OUTLINE_PASS)
-                .unwrap();
+            draw_3d_graph.add_node_edge(core_3d::graph::node::MAIN_PASS, graph::node::OUTLINE_PASS);
         }
     }
 }
@@ -134,33 +120,13 @@ pub enum OutlineType {
     Jfa,
 }
 
-// impl OutlineType {
-//     fn is_blur(&self) -> bool {
-//         match self {
-//             OutlineType::BoxBlur | OutlineType::GaussianBlur => true,
-//             OutlineType::MaxFilter => false,
-//             OutlineType::Jfa => false,
-//         }
-//     }
-// }
-
-#[derive(Component, Clone, Copy, Debug, Default)]
+#[derive(Component, Clone, Copy, Debug, Default, ExtractComponent)]
 pub struct OutlineSettings {
     // The size or thickness of the outline, higher numbers will create wider outlines
     pub size: f32,
     // The intensity of the outline. Only useful for blurred outlines. Does nothing for other types of outline.
     pub intensity: f32,
     pub outline_type: OutlineType,
-}
-
-impl ExtractComponent for OutlineSettings {
-    type Query = &'static Self;
-
-    type Filter = ();
-
-    fn extract_component(item: bevy::ecs::query::QueryItem<Self::Query>) -> Self {
-        *item
-    }
 }
 
 #[derive(Component, ShaderType, Clone)]
@@ -246,7 +212,7 @@ impl FromWorld for OutlineMeta {
                 ],
             });
 
-        let mut pipeline_cache = world.resource_mut::<PipelineCache>();
+        let pipeline_cache = world.resource::<PipelineCache>();
 
         let max_filter_pipeline = pipeline_cache.queue_render_pipeline(
             RenderPipelineDescriptorBuilder::fullscreen()
@@ -329,7 +295,7 @@ struct BlurPipelines {
 
 fn prepare_blur_pipelines(
     mut commands: Commands,
-    mut pipeline_cache: ResMut<PipelineCache>,
+    pipeline_cache: Res<PipelineCache>,
     mut pipelines: ResMut<SpecializedRenderPipelines<BlurPipeline>>,
     blur_pipeline: Res<BlurPipeline>,
     views: Query<(Entity, &OutlineSettings)>,
@@ -342,7 +308,7 @@ fn prepare_blur_pipelines(
         };
 
         let vertical_blur_pipeline_id = pipelines.specialize(
-            &mut pipeline_cache,
+            &pipeline_cache,
             &blur_pipeline,
             BlurPipelineKey {
                 blur_type,
@@ -350,7 +316,7 @@ fn prepare_blur_pipelines(
             },
         );
         let horizontal_blur_pipeline_id = pipelines.specialize(
-            &mut pipeline_cache,
+            &pipeline_cache,
             &blur_pipeline,
             BlurPipelineKey {
                 blur_type,
@@ -389,6 +355,7 @@ fn prepare_outline_textures(
             dimension: TextureDimension::D2,
             format: TextureFormat::bevy_default(),
             usage: TextureUsages::RENDER_ATTACHMENT | TextureUsages::TEXTURE_BINDING,
+            view_formats: &[],
         };
 
         let stencil_texture = texture_cache.get(

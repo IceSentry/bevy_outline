@@ -9,6 +9,7 @@ use nanorand::Rng;
 
 fn main() {
     App::new()
+        .insert_resource(Msaa::Off)
         .add_plugins(DefaultPlugins.set(ImagePlugin::default_nearest()))
         .add_plugin(OutlinePlugin)
         .add_startup_system(setup)
@@ -76,7 +77,13 @@ fn setup(
 
     // ground plane
     commands.spawn(PbrBundle {
-        mesh: meshes.add(shape::Plane { size: 50. }.into()),
+        mesh: meshes.add(
+            shape::Plane {
+                size: 50.,
+                subdivisions: 1,
+            }
+            .into(),
+        ),
         material: materials.add(Color::SILVER.into()),
         ..default()
     });

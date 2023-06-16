@@ -1,5 +1,16 @@
+#ifndef MAX_CASCADES_PER_LIGHT
+    #define MAX_CASCADES_PER_LIGHT 1
+#endif
+
+#ifndef MAX_DIRECTIONAL_LIGHTS
+    #define MAX_DIRECTIONAL_LIGHTS 1
+#endif
+
+#import bevy_pbr::mesh_view_types
 #import bevy_pbr::mesh_types
-#import bevy_pbr::mesh_view_bindings
+
+@group(0) @binding(0)
+var<uniform> view: View;
 
 struct StencilUniform {
     color: vec4<f32>,

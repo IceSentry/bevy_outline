@@ -27,7 +27,7 @@ pub fn fragment_state(
     Some(FragmentState {
         entry_point: entry_point.into(),
         shader: shader.typed::<Shader>(),
-        shader_defs: shader_defs.to_vec(),
+        shader_defs: shader_defs.iter().map(|def| def.as_str().into()).collect(),
         targets: targets.iter().map(|target| Some(target.clone())).collect(),
     })
 }
@@ -70,10 +70,11 @@ impl RenderPipelineDescriptorBuilder {
                 fragment: None,
                 vertex: vertex_state,
                 label: None,
-                layout: None,
+                layout: Vec::new(),
                 primitive: PrimitiveState::default(),
                 depth_stencil: None,
                 multisample: MultisampleState::default(),
+                push_constant_ranges: Vec::new(),
             },
         }
     }
@@ -84,10 +85,11 @@ impl RenderPipelineDescriptorBuilder {
                 fragment: None,
                 vertex: fullscreen_shader_vertex_state(),
                 label: None,
-                layout: None,
+                layout: Vec::new(),
                 primitive: PrimitiveState::default(),
                 depth_stencil: None,
                 multisample: MultisampleState::default(),
+                push_constant_ranges: Vec::new(),
             },
         }
     }
@@ -109,7 +111,7 @@ impl RenderPipelineDescriptorBuilder {
     }
 
     pub fn layout(mut self, layouts: Vec<BindGroupLayout>) -> Self {
-        self.desc.layout = Some(layouts);
+        self.desc.layout = layouts;
         self
     }
 

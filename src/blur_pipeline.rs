@@ -101,17 +101,18 @@ impl SpecializedRenderPipeline for BlurPipeline {
 
         RenderPipelineDescriptor {
             label: Some(format!("{}_blur_pipeline", key.direction).into()),
-            layout: Some(vec![self.layout.clone()]),
+            layout: vec![self.layout.clone()],
             vertex: fullscreen_shader_vertex_state(),
             fragment: Some(FragmentState {
                 shader: BLUR_SHADER_HANDLE.typed(),
-                shader_defs,
+                shader_defs: shader_defs.iter().map(|def| def.as_str().into()).collect(),
                 entry_point: "fragment".into(),
                 targets: vec![Some(color_target(None))],
             }),
             primitive: PrimitiveState::default(),
             depth_stencil: None,
             multisample: MultisampleState::default(),
+            push_constant_ranges: Vec::new(),
         }
     }
 }

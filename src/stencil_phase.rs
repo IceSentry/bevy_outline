@@ -1,8 +1,11 @@
 use bevy::{
     asset::load_internal_asset,
-    ecs::system::{
-        lifetimeless::{Read, SQuery, SRes},
-        SystemParamItem,
+    ecs::{
+        query::ROQueryItem,
+        system::{
+            lifetimeless::{Read, SRes},
+            SystemParamItem,
+        },
     },
     pbr::{
         DrawMesh, MeshPipeline, MeshPipelineKey, MeshUniform, SetMeshBindGroup,
@@ -16,8 +19,8 @@ use bevy::{
         render_asset::RenderAssets,
         render_phase::{
             sort_phase_system, AddRenderCommand, CachedRenderPipelinePhaseItem, DrawFunctionId,
-            DrawFunctions, EntityPhaseItem, EntityRenderCommand, PhaseItem, RenderCommandResult,
-            RenderPhase, SetItemPipeline, TrackedRenderPass,
+            DrawFunctions, PhaseItem, RenderCommand, RenderCommandResult, RenderPhase,
+            SetItemPipeline, TrackedRenderPass,
         },
         render_resource::{
             BindGroup, BindGroupDescriptor, BindGroupLayout, BindGroupLayoutDescriptor,
@@ -27,7 +30,7 @@ use bevy::{
         },
         renderer::RenderDevice,
         view::{ExtractedView, VisibleEntities},
-        Extract, RenderApp, RenderStage,
+        Extract, RenderApp, RenderSet,
     },
     utils::{FixedState, FloatOrd, Hashed},
 };
@@ -61,11 +64,12 @@ impl Plugin for MeshStencilPlugin {
             .init_resource::<SpecializedMeshPipelines<StencilPipeline>>()
             .init_resource::<DrawFunctions<MeshStencil>>()
             .add_render_command::<MeshStencil, DrawMeshStencil>()
-            .add_system_to_stage(RenderStage::PhaseSort, sort_phase_system::<MeshStencil>)
-            .add_system_to_stage(RenderStage::Extract, extract_stencil_phase)
-            .add_system_to_stage(RenderStage::Extract, extract_stencil_uniform)
-            .add_system_to_stage(RenderStage::Queue, queue_stencil_bind_group)
-            .add_system_to_stage(RenderStage::Queue, queue_mesh_stencil);
+            .add_system(sort_phase_system::<MeshStencil>.in_set(RenderSet::PhaseSort))
+            .add_systems(
+                (extract_stencil_phase, extract_stencil_uniform).in_schedule(ExtractSchedule),
+            )
+            .add_system(queue_stencil_bind_group.in_set(RenderSet::Queue))
+            .add_system(queue_mesh_stencil.in_set(RenderSet::Queue));
     }
 }
 
@@ -79,18 +83,16 @@ pub struct MeshStencil {
 impl PhaseItem for MeshStencil {
     type SortKey = FloatOrd;
 
+    fn entity(&self) -> Entity {
+        self.entity
+    }
+
     fn sort_key(&self) -> Self::SortKey {
         FloatOrd(self.distance)
     }
 
     fn draw_function(&self) -> DrawFunctionId {
         self.draw_function
-    }
-}
-
-impl EntityPhaseItem for MeshStencil {
-    fn entity(&self) -> Entity {
-        self.entity
     }
 }
 
@@ -106,24 +108,20 @@ pub struct StencilUniform {
 }
 
 pub struct SetStencilBindGroup<const I: usize>;
-impl<const I: usize> EntityRenderCommand for SetStencilBindGroup<I> {
-    type Param = (
-        SRes<StencilBindGroup>,
-        SQuery<Read<DynamicUniformIndex<StencilUniform>>>,
-    );
+impl<P: PhaseItem, const I: usize> RenderCommand<P> for SetStencilBindGroup<I> {
+    type Param = SRes<StencilBindGroup>;
+    type ViewWorldQuery = ();
+    type ItemWorldQuery = Read<DynamicUniformIndex<StencilUniform>>;
+
     #[inline]
     fn render<'w>(
-        _view: Entity,
-        item: Entity,
-        (resource, uniform_query): SystemParamItem<'w, '_, Self::Param>,
+        _item: &P,
+        _view: (),
+        mesh_index: ROQueryItem<'w, Self::ItemWorldQuery>,
+        resource: SystemParamItem<'w, '_, Self::Param>,
         pass: &mut TrackedRenderPass<'w>,
     ) -> RenderCommandResult {
-        let Ok(uniform) = uniform_query.get(item) else {
-            return RenderCommandResult::Failure;
-        };
-
-        pass.set_bind_group(I, &resource.into_inner().value, &[uniform.index()]);
-
+        pass.set_bind_group(I, &resource.into_inner().value, &[mesh_index.index()]);
         RenderCommandResult::Success
     }
 }
@@ -178,15 +176,20 @@ impl SpecializedMeshPipeline for StencilPipeline {
 
         desc.label = Some("mesh_stencil_pipeline".into());
 
-        let mut bind_group_layout = vec![self.mesh_pipeline.view_layout.clone()];
-        if desc.vertex.shader_defs.contains(&"SKINNED".to_string()) {
+        let mut bind_group_layout = match key.msaa_samples() {
+            1 => vec![self.mesh_pipeline.view_layout.clone()],
+            _ => {
+                vec![self.mesh_pipeline.view_layout_multisampled.clone()]
+            }
+        };
+        if desc.vertex.shader_defs.contains(&"SKINNED".into()) {
             bind_group_layout.push(self.mesh_pipeline.skinned_mesh_layout.clone());
         } else {
             bind_group_layout.push(self.mesh_pipeline.mesh_layout.clone());
         };
         bind_group_layout.push(self.stencil_bind_group_layout.clone());
 
-        desc.layout = Some(bind_group_layout);
+        desc.layout = bind_group_layout;
         desc.vertex.shader = STENCIL_SHADER_HANDLE.typed::<Shader>();
         desc.fragment = fragment_state(
             STENCIL_SHADER_HANDLE,
@@ -258,7 +261,7 @@ pub fn queue_mesh_stencil(
     stencil_draw_functions: Res<DrawFunctions<MeshStencil>>,
     stencil_pipeline: Res<StencilPipeline>,
     mut pipelines: ResMut<SpecializedMeshPipelines<StencilPipeline>>,
-    mut pipeline_cache: ResMut<PipelineCache>,
+    pipeline_cache: Res<PipelineCache>,
     render_meshes: Res<RenderAssets<Mesh>>,
     outline_meshes: Query<(Entity, &Handle<Mesh>, &MeshUniform), With<Outline>>,
     mut views: Query<(
@@ -266,6 +269,7 @@ pub fn queue_mesh_stencil(
         &mut VisibleEntities,
         &mut RenderPhase<MeshStencil>,
     )>,
+    msaa: Res<Msaa>,
 ) {
     let draw_mesh_stencil = stencil_draw_functions
         .read()
@@ -276,6 +280,8 @@ pub fn queue_mesh_stencil(
         let view_matrix = view.transform.compute_matrix();
         let inv_view_row_2 = view_matrix.inverse().row(2);
 
+        let view_key = MeshPipelineKey::from_msaa_samples(msaa.samples());
+
         for visible_entity in visible_entities.entities.iter().copied() {
             let Ok((entity, mesh_handle, mesh_uniform)) = outline_meshes.get(visible_entity) else {
                 continue;
@@ -284,9 +290,9 @@ pub fn queue_mesh_stencil(
                 continue;
             };
 
-            let key = MeshPipelineKey::from_primitive_topology(mesh.primitive_topology);
+            let key = MeshPipelineKey::from_primitive_topology(mesh.primitive_topology) | view_key;
 
-            let Ok(pipeline) = pipelines.specialize(&mut pipeline_cache, &stencil_pipeline, key, &mesh.layout) else {
+            let Ok(pipeline) = pipelines.specialize(&pipeline_cache, &stencil_pipeline, key, &mesh.layout) else {
                 continue;
             };
 
