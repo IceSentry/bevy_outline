@@ -141,11 +141,10 @@ impl Node for OutlineNode {
                         ],
                     })
                 };
-
                 blur_pass(
                     render_context,
                     vertical_blur_pipeline,
-                    blur_bind_group("vertical_blur", &stencil_texture.0),
+                    blur_bind_group("vertical_blur", &stencil_texture.texture),
                     blur_uniform_index,
                     &blur_textures.vertical_blur_texture,
                 );
@@ -191,7 +190,7 @@ impl Node for OutlineNode {
                     label: Some("max_filter_bind_group"),
                     layout: &pipelines.max_filter_bind_group_layout,
                     entries: &bind_group_entries![
-                        0 => BindingResource::TextureView(&stencil_texture.0.default_view),
+                        0 => BindingResource::TextureView(&stencil_texture.texture.default_view),
                         1 => BindingResource::Sampler(&pipelines.sampler),
                         2 => max_filter_settings_uniforms.clone(),
                     ],
@@ -213,7 +212,7 @@ impl Node for OutlineNode {
             layout: &pipelines.combine_bind_group_layout,
             entries: &bind_group_entries![
                 0 => BindingResource::Sampler(&pipelines.sampler),
-                1 => BindingResource::TextureView(&stencil_texture.0.default_view),
+                1 => BindingResource::TextureView(&stencil_texture.texture.default_view),
                 2 => BindingResource::TextureView(&blur_textures.horizontal_blur_texture.default_view),
                 3 => combine_settings_uniforms.clone(),
             ],
@@ -268,14 +267,7 @@ fn draw_stencil(
 ) {
     let mut pass = render_context.begin_tracked_render_pass(RenderPassDescriptor {
         label: Some("outline_stencil_pass"),
-        color_attachments: &[Some(RenderPassColorAttachment {
-            view: &stencil_texture.0.default_view,
-            resolve_target: None,
-            ops: Operations {
-                load: LoadOp::Clear(Color::NONE.into()),
-                store: true,
-            },
-        })],
+        color_attachments: &[stencil_texture.get_color_attachment()],
         depth_stencil_attachment: None,
     });
     stencil_phase.render(&mut pass, world, view_entity);

@@ -4,7 +4,8 @@ use bevy::{
     render::{
         render_resource::{
             BindGroupLayout, BlendState, ColorTargetState, ColorWrites, FragmentState,
-            MultisampleState, PrimitiveState, RenderPipelineDescriptor, TextureFormat, VertexState,
+            MultisampleState, PrimitiveState, RenderPipelineDescriptor, ShaderDefVal,
+            TextureFormat, VertexState,
         },
         texture::BevyDefault,
     },
@@ -22,12 +23,12 @@ pub fn fragment_state(
     shader: HandleUntyped,
     entry_point: &'static str,
     targets: &[ColorTargetState],
-    shader_defs: &[String],
+    shader_defs: &[ShaderDefVal],
 ) -> Option<FragmentState> {
     Some(FragmentState {
         entry_point: entry_point.into(),
         shader: shader.typed::<Shader>(),
-        shader_defs: shader_defs.iter().map(|def| def.as_str().into()).collect(),
+        shader_defs: shader_defs.to_vec(),
         targets: targets.iter().map(|target| Some(target.clone())).collect(),
     })
 }
@@ -94,7 +95,7 @@ impl RenderPipelineDescriptorBuilder {
         }
     }
 
-    pub fn label(mut self, label: &'static str) -> Self {
+    pub fn label(mut self, label: String) -> Self {
         self.desc.label = Some(label.into());
         self
     }
@@ -104,7 +105,7 @@ impl RenderPipelineDescriptorBuilder {
         shader: HandleUntyped,
         entry_point: &'static str,
         targets: &[ColorTargetState],
-        shader_defs: &[String],
+        shader_defs: &[ShaderDefVal],
     ) -> Self {
         self.desc.fragment = fragment_state(shader, entry_point, targets, shader_defs);
         self

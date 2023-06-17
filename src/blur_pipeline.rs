@@ -1,18 +1,20 @@
 use bevy::{
-    core_pipeline::fullscreen_vertex_shader::fullscreen_shader_vertex_state,
     prelude::*,
     render::{
         render_resource::{
             BindGroupLayout, BindGroupLayoutDescriptor, BindingType, BufferBindingType,
-            FragmentState, MultisampleState, PrimitiveState, RenderPipelineDescriptor,
-            SamplerBindingType, ShaderType, SpecializedRenderPipeline, TextureSampleType,
-            TextureViewDimension,
+            RenderPipelineDescriptor, SamplerBindingType, ShaderType, SpecializedRenderPipeline,
+            TextureSampleType, TextureViewDimension,
         },
         renderer::RenderDevice,
     },
 };
 
-use crate::{bind_group_layout_entries, utils::color_target, BLUR_SHADER_HANDLE};
+use crate::{
+    bind_group_layout_entries,
+    utils::{color_target, RenderPipelineDescriptorBuilder},
+    BLUR_SHADER_HANDLE,
+};
 
 #[derive(PartialEq, Eq, Hash, Clone, Copy)]
 pub enum BlurDirection {
@@ -90,29 +92,24 @@ impl SpecializedRenderPipeline for BlurPipeline {
         let mut shader_defs = vec![];
 
         match key.direction {
-            BlurDirection::Vertical => shader_defs.push("VERTICAL".to_string()),
-            BlurDirection::Horizontal => shader_defs.push("HORIZONTAL".to_string()),
+            BlurDirection::Vertical => shader_defs.push("VERTICAL".into()),
+            BlurDirection::Horizontal => shader_defs.push("HORIZONTAL".into()),
         };
 
         match key.blur_type {
-            BlurType::Box => shader_defs.push("BOX_BLUR".to_string()),
-            BlurType::Gaussian => shader_defs.push("GAUSSIAN_BLUR".to_string()),
+            BlurType::Box => shader_defs.push("BOX_BLUR".into()),
+            BlurType::Gaussian => shader_defs.push("GAUSSIAN_BLUR".into()),
         }
 
-        RenderPipelineDescriptor {
-            label: Some(format!("{}_blur_pipeline", key.direction).into()),
-            layout: vec![self.layout.clone()],
-            vertex: fullscreen_shader_vertex_state(),
-            fragment: Some(FragmentState {
-                shader: BLUR_SHADER_HANDLE.typed(),
-                shader_defs: shader_defs.iter().map(|def| def.as_str().into()).collect(),
-                entry_point: "fragment".into(),
-                targets: vec![Some(color_target(None))],
-            }),
-            primitive: PrimitiveState::default(),
-            depth_stencil: None,
-            multisample: MultisampleState::default(),
-            push_constant_ranges: Vec::new(),
-        }
+        RenderPipelineDescriptorBuilder::fullscreen()
+            .label(format!("{}_blur_pipeline", key.direction))
+            .layout(vec![self.layout.clone()])
+            .fragment(
+                BLUR_SHADER_HANDLE,
+                "fragment",
+                &[color_target(None)],
+                &shader_defs,
+            )
+            .build()
     }
 }

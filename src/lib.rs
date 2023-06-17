@@ -17,9 +17,10 @@ use bevy::{
         render_graph::RenderGraph,
         render_resource::{
             AddressMode, BindGroupLayout, BindGroupLayoutDescriptor, BindingType, BlendState,
-            BufferBindingType, CachedRenderPipelineId, Extent3d, FilterMode, PipelineCache,
-            Sampler, SamplerBindingType, SamplerDescriptor, ShaderType, SpecializedRenderPipelines,
-            TextureDescriptor, TextureDimension, TextureFormat, TextureSampleType, TextureUsages,
+            BufferBindingType, CachedRenderPipelineId, Extent3d, FilterMode, LoadOp, Operations,
+            PipelineCache, RenderPassColorAttachment, Sampler, SamplerBindingType,
+            SamplerDescriptor, ShaderType, SpecializedRenderPipelines, TextureDescriptor,
+            TextureDimension, TextureFormat, TextureSampleType, TextureUsages,
             TextureViewDimension,
         },
         renderer::RenderDevice,
@@ -142,7 +143,31 @@ struct MaxFilterSettingsUniform {
 }
 
 #[derive(Component)]
-pub struct StencilTexture(CachedTexture);
+pub struct StencilTexture {
+    texture: CachedTexture,
+    texture_sampled: Option<CachedTexture>,
+}
+
+impl StencilTexture {
+    fn get_color_attachment(&self) -> Option<RenderPassColorAttachment<'_>> {
+        let ops = Operations {
+            load: LoadOp::Clear(Color::NONE.into()),
+            store: true,
+        };
+        match self.texture_sampled.as_ref() {
+            Some(CachedTexture { default_view, .. }) => Some(RenderPassColorAttachment {
+                view: default_view,
+                resolve_target: Some(&self.texture.default_view),
+                ops,
+            }),
+            None => Some(RenderPassColorAttachment {
+                view: &self.texture.default_view,
+                resolve_target: None,
+                ops,
+            }),
+        }
+    }
+}
 
 #[derive(Component)]
 struct BlurredOutlineTextures {
@@ -216,7 +241,7 @@ impl FromWorld for OutlineMeta {
 
         let max_filter_pipeline = pipeline_cache.queue_render_pipeline(
             RenderPipelineDescriptorBuilder::fullscreen()
-                .label("max_filter_pipeline")
+                .label("max_filter_pipeline".into())
                 .fragment(
                     MAX_FILTER_SHADER_HANDLE,
                     "fragment",
@@ -229,7 +254,7 @@ impl FromWorld for OutlineMeta {
 
         let combine_pipeline = pipeline_cache.queue_render_pipeline(
             RenderPipelineDescriptorBuilder::fullscreen()
-                .label("combine_pipeline")
+                .label("combine_pipeline".into())
                 .fragment(
                     COMBINE_SHADER_HANDLE,
                     "combine",
@@ -337,6 +362,7 @@ fn prepare_outline_textures(
     render_device: Res<RenderDevice>,
     mut texture_cache: ResMut<TextureCache>,
     cameras: Query<(Entity, &ExtractedCamera, &OutlineSettings)>,
+    msaa: Res<Msaa>,
 ) {
     for (entity, camera, settings) in &cameras {
         let Some(UVec2 { x, y }) = camera.physical_viewport_size else {
@@ -367,7 +393,20 @@ fn prepare_outline_textures(
         );
 
         let mut entity_commands = commands.entity(entity);
-        entity_commands.insert(StencilTexture(stencil_texture));
+        entity_commands.insert(StencilTexture {
+            texture: stencil_texture,
+            texture_sampled: match msaa.samples() {
+                1 => None,
+                _ => Some(texture_cache.get(
+                    &render_device,
+                    TextureDescriptor {
+                        label: Some("stencil_texture_multisampled"),
+                        sample_count: msaa.samples(),
+                        ..base_desc
+                    },
+                )),
+            },
+        });
 
         match settings.outline_type {
             OutlineType::BoxBlur | OutlineType::GaussianBlur => {
