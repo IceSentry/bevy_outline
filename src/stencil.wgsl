@@ -24,7 +24,6 @@ var<uniform> joint_matrices: SkinnedMesh;
 #import bevy_pbr::skinning
 #endif
 
-// NOTE: Bindings must come before functions that use them!
 #import bevy_pbr::mesh_functions
 
 @group(2) @binding(0)

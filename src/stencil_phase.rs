@@ -24,9 +24,10 @@ use bevy::{
         },
         render_resource::{
             BindGroup, BindGroupDescriptor, BindGroupLayout, BindGroupLayoutDescriptor,
-            BindingType, BufferBindingType, CachedRenderPipelineId, PipelineCache,
-            RenderPipelineDescriptor, ShaderType, SpecializedMeshPipeline,
-            SpecializedMeshPipelineError, SpecializedMeshPipelines,
+            BindingType, BufferBindingType, CachedRenderPipelineId, CompareFunction,
+            DepthBiasState, DepthStencilState, PipelineCache, RenderPipelineDescriptor, ShaderType,
+            SpecializedMeshPipeline, SpecializedMeshPipelineError, SpecializedMeshPipelines,
+            StencilFaceState, StencilOperation, StencilState, TextureFormat,
         },
         renderer::RenderDevice,
         view::{ExtractedView, VisibleEntities},
@@ -191,13 +192,25 @@ impl SpecializedMeshPipeline for StencilPipeline {
 
         desc.layout = bind_group_layout;
         desc.vertex.shader = STENCIL_SHADER_HANDLE.typed::<Shader>();
-        desc.fragment = fragment_state(
-            STENCIL_SHADER_HANDLE,
-            "fragment",
-            &[color_target(None)],
-            &[],
-        );
-        desc.depth_stencil = None;
+        desc.fragment = fragment_state(STENCIL_SHADER_HANDLE, "fragment", &[], &[]);
+        let stencil_state = StencilFaceState {
+            compare: CompareFunction::Always,
+            fail_op: StencilOperation::Keep,
+            depth_fail_op: StencilOperation::Keep,
+            pass_op: StencilOperation::IncrementClamp,
+        };
+        desc.depth_stencil = Some(DepthStencilState {
+            format: TextureFormat::Depth24PlusStencil8,
+            depth_write_enabled: false,
+            depth_compare: CompareFunction::Never,
+            bias: DepthBiasState::default(),
+            stencil: StencilState {
+                front: stencil_state,
+                back: stencil_state,
+                read_mask: 0xff,
+                write_mask: 0xff,
+            },
+        });
 
         Ok(desc)
     }

@@ -388,6 +388,7 @@ fn prepare_outline_textures(
             &render_device,
             TextureDescriptor {
                 label: Some("stencil_output"),
+                format: TextureFormat::Depth24PlusStencil8,
                 ..base_desc
             },
         );

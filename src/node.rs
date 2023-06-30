@@ -6,7 +6,8 @@ use bevy::{
         render_phase::RenderPhase,
         render_resource::{
             BindGroup, BindGroupDescriptor, BindingResource, LoadOp, Operations, PipelineCache,
-            RenderPassColorAttachment, RenderPassDescriptor, RenderPipeline,
+            RenderPassColorAttachment, RenderPassDepthStencilAttachment, RenderPassDescriptor,
+            RenderPipeline,
         },
         renderer::{RenderContext, RenderDevice},
         texture::CachedTexture,
@@ -267,8 +268,15 @@ fn draw_stencil(
 ) {
     let mut pass = render_context.begin_tracked_render_pass(RenderPassDescriptor {
         label: Some("outline_stencil_pass"),
-        color_attachments: &[stencil_texture.get_color_attachment()],
-        depth_stencil_attachment: None,
+        color_attachments: &[],
+        depth_stencil_attachment: Some(RenderPassDepthStencilAttachment {
+            stencil_ops: Some(Operations {
+                load: LoadOp::Clear(0),
+                store: true,
+            }),
+            view: &stencil_texture.texture.default_view,
+            depth_ops: None,
+        }),
     });
     stencil_phase.render(&mut pass, world, view_entity);
 }
